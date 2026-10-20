@@ -5,7 +5,6 @@
 #include <set>
 #include <utility>
 
-namespace gwl {
 
 namespace {
 
@@ -190,7 +189,7 @@ void WebViewWindow::setTitle(const std::string& title) {
 }
 
 void WebViewWindow::emit(const std::string& event, const Json& data) {
-    runScript("window.gwlReceive(" + Json{{"event", event}, {"data", data}}.dump() + ")");
+    runScript("window.hostReceive(" + Json{{"event", event}, {"data", data}}.dump() + ")");
 }
 
 void WebViewWindow::openDevTools() {
@@ -272,4 +271,3 @@ const std::string& applicationName() {
     return applicationNameStorage();
 }
 
-}  // namespace gwl

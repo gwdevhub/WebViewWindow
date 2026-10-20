@@ -7,7 +7,6 @@
 
 #include <nlohmann/json.hpp>
 
-namespace gwl {
 
 using Json = nlohmann::json;
 
@@ -21,7 +20,7 @@ struct Request {
     static bool parse(const std::string& text, Request& request, std::string& error);
 };
 
-// The scripts that deliver an answer to the page: window.gwlReceive({id, result}) or window.gwlReceive({id, error}).
+// The scripts that deliver an answer to the page: window.hostReceive({id, result}) or window.hostReceive({id, error}).
 std::string replyScript(std::uint64_t id, const Json& result);
 std::string errorScript(std::uint64_t id, const std::string& message);
 
@@ -45,4 +44,3 @@ private:
     std::map<std::string, Method> methods_;
 };
 
-}  // namespace gwl

@@ -11,7 +11,6 @@
 
 #include "WebViewWindow.h"
 
-namespace gwl {
 
 struct NativeWindow {
     GtkWidget* window = nullptr;
@@ -178,7 +177,7 @@ void ensureGtk() {
     (void)initialized;
 }
 
-// A script message from the page: window.webkit.messageHandlers.gwl.postMessage(text).
+// A script message from the page: window.webkit.messageHandlers.host.postMessage(text).
 void onScriptMessage(WebKitUserContentManager*, JSCValue* value, WebKitUserMessage*, gpointer data) {
     auto* window = static_cast<WebViewWindow*>(data);
     char* text = api().jsc_value_to_string(value);
@@ -271,9 +270,9 @@ void WebViewWindow::platformOpen() {
 
     native.manager = gtk.user_content_manager_new();
     // The signal is connected before the handler is registered, as WebKitGTK recommends.
-    gtk.g_signal_connect_data(native.manager, "script-message-with-reply-received::gwl",
+    gtk.g_signal_connect_data(native.manager, "script-message-with-reply-received::host",
                               reinterpret_cast<GCallback>(onScriptMessage), this, nullptr, static_cast<GConnectFlags>(0));
-    gtk.user_content_manager_register_script_message_handler_with_reply(native.manager, "gwl", nullptr);
+    gtk.user_content_manager_register_script_message_handler_with_reply(native.manager, "host", nullptr);
     native.view = reinterpret_cast<WebKitWebView*>(gtk.web_view_new_with_user_content_manager(native.manager));
     if (options_.transparent) {
         const RgbaColor clear{0, 0, 0, 0};
@@ -495,4 +494,3 @@ void runOnUiThread(std::function<void()> task) {
     api().idle_add(runQueuedTask, new std::function<void()>(std::move(task)));
 }
 
-}  // namespace gwl

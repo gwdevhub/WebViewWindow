@@ -6,8 +6,8 @@ transparent layer over the desktop.
 
 The library is meant to be used as a submodule. The host application:
 
-- calls `gwl::setApplicationName` and `gwl::initializeWindowing` at startup,
-- subclasses `gwl::WebViewWindow`, overriding `html()` (or `devUrl()`) and `title()`,
+- calls `setApplicationName` and `initializeWindowing` at startup,
+- subclasses `WebViewWindow`, overriding `html()` (or `devUrl()`) and `title()`,
 - defines the desktop functions declared in `include/WebViewWindow.h` for each platform it runs on: `showError`,
   `cursorPosition`, `workArea` and `workAreaAt`. `example/Host.cpp` has the Windows versions.
 

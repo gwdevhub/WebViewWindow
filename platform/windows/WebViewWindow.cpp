@@ -22,14 +22,13 @@
 #include <cmath>
 #include <filesystem>
 
-namespace gwl {
 
 namespace {
 
 using CreateEnvironmentFn = HRESULT(STDMETHODCALLTYPE*)(PCWSTR, PCWSTR, ICoreWebView2EnvironmentOptions*,
                                                         ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler*);
 
-const wchar_t* const kWindowClass = L"GwlWebViewWindow";
+const wchar_t* const kWindowClass = L"WebViewWindow";
 // Where the WebView2 runtime is downloaded from.
 const char* const kWebView2Download = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 
@@ -900,4 +899,3 @@ void stopEventLoop() {
     PostQuitMessage(0);
 }
 
-}  // namespace gwl

@@ -4,7 +4,6 @@
 
 #include <stdexcept>
 
-namespace gwl {
 namespace composition {
 
 namespace {
@@ -130,4 +129,3 @@ void revokeDropTarget(HWND hwnd) {
 }
 
 }  // namespace composition
-}  // namespace gwl

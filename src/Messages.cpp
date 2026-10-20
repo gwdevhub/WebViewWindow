@@ -2,7 +2,6 @@
 
 #include <stdexcept>
 
-namespace gwl {
 
 bool Request::parse(const std::string& text, Request& request, std::string& error) {
     Json json = Json::parse(text, nullptr, false);
@@ -29,11 +28,11 @@ bool Request::parse(const std::string& text, Request& request, std::string& erro
 }
 
 std::string replyScript(std::uint64_t id, const Json& result) {
-    return "window.gwlReceive(" + Json{{"id", id}, {"result", result}}.dump() + ")";
+    return "window.hostReceive(" + Json{{"id", id}, {"result", result}}.dump() + ")";
 }
 
 std::string errorScript(std::uint64_t id, const std::string& message) {
-    return "window.gwlReceive(" + Json{{"id", id}, {"error", message}}.dump() + ")";
+    return "window.hostReceive(" + Json{{"id", id}, {"error", message}}.dump() + ")";
 }
 
 void MessageHandler::on(const std::string& name, Method method) {
@@ -53,4 +52,3 @@ void MessageHandler::dispatch(WebViewWindow& window, const Request& request, con
     }
 }
 
-}  // namespace gwl

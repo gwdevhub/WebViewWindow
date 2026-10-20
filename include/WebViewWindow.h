@@ -13,7 +13,6 @@
 #include "Geometry.h"
 #include "Messages.h"
 
-namespace gwl {
 
 // The edges and corners a window can be resized from, in the order GDK's edges use.
 enum class ResizeEdge { NorthWest, North, NorthEast, West, East, SouthWest, South, SouthEast };
@@ -99,7 +98,7 @@ public:
     // Asks the window to close, as the window manager's close would: allowClose decides.
     void close();
 
-    // Sends an event to the page: window.gwlReceive({event, data}).
+    // Sends an event to the page: window.hostReceive({event, data}).
     void emit(const std::string& event, const Json& data);
     void runScript(const std::string& script);
 
@@ -223,4 +222,3 @@ std::optional<Rect> workAreaAt(const Rect& rect);
 // The mouse position on screen, when the platform can give it.
 std::optional<std::pair<int, int>> cursorPosition();
 
-}  // namespace gwl

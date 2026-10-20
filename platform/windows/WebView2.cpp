@@ -5,7 +5,6 @@
 
 #include <utility>
 
-namespace gwl {
 namespace webview2 {
 
 namespace {
@@ -180,4 +179,3 @@ ICoreWebView2ExecuteScriptCompletedHandler* scriptDone() {
 }
 
 }  // namespace webview2
-}  // namespace gwl

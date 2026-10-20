@@ -7,7 +7,7 @@
 
 namespace {
 
-class HelloWindow : public gwl::WebViewWindow {
+class HelloWindow : public WebViewWindow {
 public:
     HelloWindow() : WebViewWindow(options()) {}
 
@@ -22,8 +22,8 @@ public:
     std::string title() const override { return "Hello"; }
 
 private:
-    static gwl::WindowOptions options() {
-        gwl::WindowOptions options;
+    static WindowOptions options() {
+        WindowOptions options;
         options.title = "Hello";
         options.width = 320;
         options.height = 160;
@@ -35,16 +35,16 @@ private:
 
 int main() {
     try {
-        gwl::setApplicationName("Hello");
-        gwl::initializeWindowing();
+        setApplicationName("Hello");
+        initializeWindowing();
         HelloWindow window;
         window.open();
-        gwl::runEventLoop();
-    } catch (const gwl::RuntimeMissingError&) {
+        runEventLoop();
+    } catch (const RuntimeMissingError&) {
         // The dialog has already said what's missing.
         return 1;
     } catch (const std::exception& error) {
-        gwl::showError(error.what());
+        showError(error.what());
         return 1;
     }
     return 0;

@@ -9,7 +9,6 @@
 
 #include "WebViewWindow.h"
 
-namespace gwl {
 
 void showError(const std::string& message) {
     std::fprintf(stderr, "%s\n", message.c_str());
@@ -43,4 +42,3 @@ std::optional<Rect> workAreaAt(const Rect& rect) {
     return Rect{area.left, area.top, area.right - area.left, area.bottom - area.top};
 }
 
-}  // namespace gwl

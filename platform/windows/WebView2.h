@@ -8,7 +8,6 @@
 
 #include <functional>
 
-namespace gwl {
 namespace webview2 {
 
 // Each makes a callback with one reference, for WebView2 to release when it's done with it.
@@ -22,4 +21,3 @@ ICoreWebView2ProcessFailedEventHandler* processFailed(std::function<void(ICoreWe
 ICoreWebView2ExecuteScriptCompletedHandler* scriptDone();
 
 }  // namespace webview2
-}  // namespace gwl

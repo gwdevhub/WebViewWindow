@@ -8,7 +8,6 @@
 #include <dcomp.h>
 #include <WebView2.h>
 
-namespace gwl {
 namespace composition {
 
 // The DirectComposition tree that a window's web view is attached to.
@@ -37,4 +36,3 @@ void registerDropTarget(HWND hwnd, ICoreWebView2CompositionController* controlle
 void revokeDropTarget(HWND hwnd);
 
 }  // namespace composition
-}  // namespace gwl

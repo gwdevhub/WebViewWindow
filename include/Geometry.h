@@ -6,7 +6,6 @@
 #include <cstring>
 #include <type_traits>
 
-namespace gwl {
 
 struct Rect {
     int x = 0;
@@ -53,4 +52,3 @@ struct Rect {
 
 static_assert(std::is_trivially_copyable_v<Rect> && sizeof(Rect) == 4 * sizeof(int), "Rect must compare by its bytes");
 
-}  // namespace gwl
