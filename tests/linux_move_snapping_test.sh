@@ -10,19 +10,6 @@ set -euo pipefail
 
 source "$(dirname "$0")/linux_common.sh"
 
-# Presses in the middle of the window, starts a move, moves the pointer by (dx, dy), and releases it.
-drag_move() {
-    local px="$1" py="$2" dx="$3" dy="$4"
-    xdotool mousemove --sync "$px" "$py"
-    xdotool mousedown 1
-    sleep 0.2
-    echo "move" >&3
-    sleep 0.3
-    xdotool mousemove --sync $((px + dx)) $((py + dy))
-    sleep 0.3
-    xdotool mouseup 1
-}
-
 start_example "${1:-}"
 
 if wait_for_line_after 0 '^loaded$'; then pass "page loaded"; else fail "page never reported loaded"; fi

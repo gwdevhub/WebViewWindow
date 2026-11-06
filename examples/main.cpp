@@ -1,11 +1,13 @@
 // A window that the tests drive. The page reports "loaded" once it has loaded. Each line on stdin is a command:
 //   hide, show, present: the window call of the same name, then the state is reported
 //   report: the state is reported
+//   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
 //   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
 //   quit: the event loop stops
-// The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height>", the window's rectangle on the screen in
-// pixels, or "frame=none" when it has no native window.
+// The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height> area=<x>,<y>,<width>,<height>". The frame is the
+// window's rectangle on the screen in pixels, or "frame=none" when it has no native window. The area is the work area of the
+// monitor the window is on, or "area=none".
 
 #include <cstdio>
 #include <exception>
@@ -42,9 +44,15 @@ public:
         const auto bounds = frame();
         std::printf("visible=%d open=%d ", isVisible() ? 1 : 0, bounds ? 1 : 0);
         if (bounds) {
-            std::printf("frame=%d,%d,%d,%d\n", bounds->x, bounds->y, bounds->width, bounds->height);
+            std::printf("frame=%d,%d,%d,%d ", bounds->x, bounds->y, bounds->width, bounds->height);
         } else {
-            std::printf("frame=none\n");
+            std::printf("frame=none ");
+        }
+        const auto area = bounds ? workAreaAt(*bounds) : std::nullopt;
+        if (area) {
+            std::printf("area=%d,%d,%d,%d\n", area->x, area->y, area->width, area->height);
+        } else {
+            std::printf("area=none\n");
         }
         std::fflush(stdout);
     }
@@ -92,6 +100,9 @@ int main() {
                     runOnUiThread([&window] { window.present(); window.report(); });
                 } else if (line == "report") {
                     runOnUiThread([&window] { window.report(); });
+                } else if (line == "confine on" || line == "confine off") {
+                    const bool confined = line == "confine on";
+                    runOnUiThread([&window, confined] { window.setConfinedToWorkArea(confined); window.report(); });
                 } else if (line == "move") {
                     runOnUiThread([&window] { window.beginMove(); });
                 } else if (line.rfind("resize ", 0) == 0) {

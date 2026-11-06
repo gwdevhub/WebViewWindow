@@ -94,6 +94,8 @@ struct NativeWindow {
     // Set while the user drags or resizes the window, so the edges snap to the grid. The window's rect and the cursor's point
     // when the drag began are what the snapping works from.
     bool snapping = false;
+    // Whether a move or resize is kept inside the window's monitor's work area, as the window's options say.
+    bool confined = true;
     RECT dragStart{};
     POINT dragCursor{};
     // A see-through window's move follows the cursor from the press itself, not through the system's move loop, which starts
@@ -341,7 +343,9 @@ void clampEdgesToWorkArea(RECT* rect, WPARAM edge) {
 void moveWithCursor(NativeWindow* native) {
     RECT target = native->pressRect;
     snapPosition(&target, native->pressRect, cursorSince(native->pressCursor));
-    clampToWorkArea(&target);
+    if (native->confined) {
+        clampToWorkArea(&target);
+    }
     SetWindowPos(native->hwnd, nullptr, target.left, target.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
@@ -475,7 +479,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             if (native->snapping) {
                 auto* rect = reinterpret_cast<RECT*>(lParam);
                 snapPosition(rect, native->dragStart, cursorSince(native->dragCursor));
-                clampToWorkArea(rect);
+                if (native->confined) {
+                    clampToWorkArea(rect);
+                }
                 return TRUE;
             }
             return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -483,7 +489,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             if (native->snapping) {
                 auto* rect = reinterpret_cast<RECT*>(lParam);
                 snapSize(rect, native->dragStart, cursorSince(native->dragCursor), wParam);
-                clampEdgesToWorkArea(rect, wParam);
+                if (native->confined) {
+                    clampEdgesToWorkArea(rect, wParam);
+                }
                 enforceMinimumSize(rect, wParam, native->minWidth, native->minHeight);
                 return TRUE;
             }
@@ -640,6 +648,12 @@ void applySkipTaskbar(HWND hwnd, bool skip) {
 
 }  // namespace
 
+void WebViewWindow::platformConfine(bool confined) {
+    if (native_) {
+        native_->confined = confined;
+    }
+}
+
 void WebViewWindow::platformSetSkipTaskbar() {
     if (native_ && native_->hwnd) {
         applySkipTaskbar(native_->hwnd, options_.skipTaskbar);
@@ -707,6 +721,7 @@ void WebViewWindow::platformOpen() {
     const auto area = workArea();
     // Sizes are in device-independent pixels, so they grow with the display's DPI.
     const UINT dpi = GetDpiForSystem();
+    native->confined = options.confinedToWorkArea;
     native->minWidth = MulDiv(scaledSize(options.minWidth), dpi, 96);
     native->minHeight = MulDiv(scaledSize(options.minHeight), dpi, 96);
     const int width = std::max(MulDiv(scaledSize(options.width), dpi, 96), native->minWidth);

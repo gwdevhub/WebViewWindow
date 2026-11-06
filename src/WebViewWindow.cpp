@@ -166,7 +166,16 @@ void WebViewWindow::move(int x, int y) {
     platformMove(kept.x, kept.y);
 }
 
+void WebViewWindow::setConfinedToWorkArea(bool confined) {
+    options_.confinedToWorkArea = confined;
+    platformConfine(confined);
+    keepOnScreen();
+}
+
 void WebViewWindow::keepOnScreen() {
+    if (!options_.confinedToWorkArea) {
+        return;
+    }
     const auto current = platformFrame();
     if (!current) {
         return;

@@ -35,6 +35,10 @@ struct WindowOptions {
     bool visible = true;
     // The page sizes the window: its reports through fitToPage set the window's size, in device-independent pixels.
     bool autosize = false;
+    // Whether the window stays inside the work area of the monitor it's on. When it's confined, the window is moved back in when it
+    // opens, is resized, or is dropped after a move or resize, so it never goes past the monitor's edges. When it isn't confined,
+    // the window may go past them, and part of it can be off the screen.
+    bool confinedToWorkArea = true;
     // Kept under other windows, so the window reads as part of the desktop.
     bool keepBelow = false;
     // Shown on every virtual desktop. Windows has none, so there it does nothing.
@@ -95,6 +99,8 @@ public:
     void setTitleBar(bool shown);
     // Keeps the window off the taskbar, or puts it back. Applies straight away when the window is open.
     void setSkipTaskbar(bool skip);
+    // Confines the window to its monitor's work area, or lets it go past the edges. Confining moves the window back in straight away.
+    void setConfinedToWorkArea(bool confined);
     // Start moving or resizing the window, following the pointer's button press on the page.
     void beginMove();
     void beginResize(ResizeEdge edge);
@@ -144,6 +150,8 @@ private:
     void platformSetTitle(const std::string& title);
     // Applies options_.skipTaskbar, which is already updated when it runs.
     void platformSetSkipTaskbar();
+    // Applies whether the window is confined to the work area, which is already updated when it runs.
+    void platformConfine(bool confined);
     // Destroys the native window and its web view. The window can be opened again after this.
     void platformUnload();
     void platformBeginMove();

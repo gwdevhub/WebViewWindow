@@ -140,7 +140,25 @@ frame_now() {
     before="$(lines_so_far)"
     echo "report" >&3
     wait_for_line_after "$before" '^visible=' > /dev/null
-    last_state | sed -n 's/.*frame=\(.*\)$/\1/p'
+    last_state | sed -n 's/.*frame=\([^ ]*\).*/\1/p'
+}
+
+# Presses in the window, starts a move, moves the pointer by (dx, dy), and releases it. The pointer must end on the screen.
+drag_move() {
+    local px="$1" py="$2" dx="$3" dy="$4"
+    xdotool mousemove --sync "$px" "$py"
+    xdotool mousedown 1
+    sleep 0.2
+    echo "move" >&3
+    sleep 0.3
+    xdotool mousemove --sync $((px + dx)) $((py + dy))
+    sleep 0.3
+    xdotool mouseup 1
+}
+
+# The work area as "x,y,width,height", from the same report. Usage: area_now
+area_now() {
+    last_state | sed -n 's/.*area=\([^ ]*\).*/\1/p'
 }
 
 # The snapping grid, in pixels. Windows snaps the edges a move or resize changes to it.

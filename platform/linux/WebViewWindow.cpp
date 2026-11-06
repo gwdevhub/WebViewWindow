@@ -6,6 +6,7 @@
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -25,6 +26,8 @@ struct NativeWindow {
     bool pageLoaded = false;
     bool wantsVisible = false;
     bool wantsFocus = false;
+    // Whether a window dropped after a move or resize is kept inside its monitor's work area.
+    bool confined = true;
 };
 
 namespace {
@@ -348,6 +351,7 @@ void WebViewWindow::platformOpen() {
                               nullptr, static_cast<GConnectFlags>(0));
 
     native.wantsVisible = options_.visible;
+    native.confined = options_.confinedToWorkArea;
     gtk.g_signal_connect_data(native.view, "load-changed", reinterpret_cast<GCallback>(onLoadChanged), &native, nullptr,
                               static_cast<GConnectFlags>(0));
 
@@ -461,7 +465,22 @@ void snapDroppedFrame(NativeWindow* native) {
     }
 }
 
-// Checks each time the drag's poll fires, until the button is let go; then the dropped frame is snapped.
+// A confined window that is dropped is moved back inside its monitor's work area. One larger than the area keeps its top-left corner.
+void confineDroppedFrame(NativeWindow* native) {
+    const Rect frame = frameOf(native->window);
+    const auto area = workAreaAt(frame);
+    if (!area) {
+        return;
+    }
+    const int x = std::max(area->x, std::min(frame.x, area->right() - frame.width));
+    const int y = std::max(area->y, std::min(frame.y, area->bottom() - frame.height));
+    if (x != frame.x || y != frame.y) {
+        api().window_move(reinterpret_cast<GtkWindow*>(native->window), x, y);
+    }
+}
+
+// Checks each time the drag's poll fires, until the button is let go; then the dropped frame is snapped, and kept in the work area
+// when the window is confined to it. While the button is held the window manager moves the window freely.
 gboolean onDragPoll(gpointer data) {
     auto* native = static_cast<NativeWindow*>(data);
     if (buttonHeld()) {
@@ -469,6 +488,9 @@ gboolean onDragPoll(gpointer data) {
     }
     if (native->window) {
         snapDroppedFrame(native);
+        if (native->confined) {
+            confineDroppedFrame(native);
+        }
     }
     native->snapping = false;
     return FALSE;
@@ -586,6 +608,12 @@ bool WebViewWindow::containsPointer() const {
     GdkWindow* underPointer = pointer ? api().device_get_window_at_position(pointer, nullptr, nullptr) : nullptr;
     // Wayland has no global coordinates; compare the actual windows, including WebKit's child windows.
     return window && underPointer && api().window_get_toplevel(underPointer) == window;
+}
+
+void WebViewWindow::platformConfine(bool confined) {
+    if (native_) {
+        native_->confined = confined;
+    }
 }
 
 void WebViewWindow::platformSetSkipTaskbar() {
