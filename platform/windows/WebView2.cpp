@@ -148,14 +148,14 @@ private:
 
 class NavigationDone : public ComObject<ICoreWebView2NavigationCompletedEventHandler> {
 public:
-    explicit NavigationDone(std::function<void()> done) : done_(std::move(done)) {}
-    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* /*sender*/, ICoreWebView2NavigationCompletedEventArgs* /*args*/) override {
-        done_();
+    explicit NavigationDone(std::function<void(ICoreWebView2NavigationCompletedEventArgs*)> done) : done_(std::move(done)) {}
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* /*sender*/, ICoreWebView2NavigationCompletedEventArgs* args) override {
+        done_(args);
         return S_OK;
     }
 
 private:
-    std::function<void()> done_;
+    std::function<void(ICoreWebView2NavigationCompletedEventArgs*)> done_;
 };
 
 class ScriptDone : public ComObject<ICoreWebView2ExecuteScriptCompletedHandler> {
@@ -190,7 +190,7 @@ ICoreWebView2ProcessFailedEventHandler* processFailed(std::function<void(ICoreWe
     return new ProcessFailed(std::move(failed));
 }
 
-ICoreWebView2NavigationCompletedEventHandler* navigationDone(std::function<void()> done) {
+ICoreWebView2NavigationCompletedEventHandler* navigationDone(std::function<void(ICoreWebView2NavigationCompletedEventArgs*)> done) {
     return new NavigationDone(std::move(done));
 }
 

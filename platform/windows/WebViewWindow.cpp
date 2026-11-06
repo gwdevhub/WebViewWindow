@@ -9,6 +9,7 @@
 #include <WebView2.h>
 
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -20,7 +21,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <exception>
 #include <filesystem>
+#include <system_error>
 
 
 namespace {
@@ -70,8 +74,14 @@ F loaderFunction(const char* name) {
 }  // namespace
 
 struct NativeWindow {
+    // Expires with the native window, so a callback that WebView2 runs late does nothing.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     WebViewWindow* owner = nullptr;
     HWND hwnd = nullptr;
+    // What the window is waiting for, for the message when its page doesn't report ready in time.
+    std::string stage = "Creating the WebView2 environment";
+    // Set once the web view has failed, so only the first failure is reported.
+    bool failed = false;
     ICoreWebView2Controller* controller = nullptr;
     ICoreWebView2* webview = nullptr;
     EventRegistrationToken messageToken{};
@@ -143,6 +153,36 @@ void showLoadedPage(NativeWindow* native) {
     }
 }
 
+// Reports that the web view can't carry on, once, on the window's thread. The owner decides what the user is shown.
+void failWebView(NativeWindow* native, const std::string& message) {
+    if (native->failed) {
+        return;
+    }
+    native->failed = true;
+    native->owner->keepWebView();
+    if (native->hwnd) {
+        KillTimer(native->hwnd, 1);
+    }
+    WebViewWindow* owner = native->owner;
+    const auto alive = std::weak_ptr<bool>(native->alive);
+    runOnUiThread([owner, alive, message] {
+        if (!alive.expired()) {
+            owner->notifyWebViewFailed(message);
+        }
+    });
+}
+
+// Fails the web view with the operation's name and HRESULT when it didn't succeed.
+bool checkWebView(NativeWindow* native, HRESULT result, const char* operation) {
+    if (SUCCEEDED(result)) {
+        return true;
+    }
+    char code[32];
+    std::snprintf(code, sizeof(code), " (HRESULT 0x%08lX)", static_cast<unsigned long>(result));
+    failWebView(native, std::string(operation) + code);
+    return false;
+}
+
 // Asks WebView2 to keep its memory use low. Older runtimes don't have the setting, so it's skipped there.
 void useLowMemoryTarget(ICoreWebView2* webview) {
     ICoreWebView2_19* webview19 = nullptr;
@@ -191,8 +231,7 @@ void recoverFromProcessFailure(NativeWindow* native, COREWEBVIEW2_PROCESS_FAILED
             return;
         }
         default:
-            runOnUiThread([] { showError("The web view stopped working, so the window has been closed."); });
-            native->owner->close();
+            failWebView(native, "The web view stopped working.");
     }
 }
 
@@ -223,7 +262,23 @@ void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
             recoverFromProcessFailure(native, kind);
         }),
         &native->processFailedToken);
-    native->webview->add_NavigationCompleted(webview2::navigationDone([native] { showLoadedPage(native); }), &native->navigationToken);
+    const auto alive = std::weak_ptr<bool>(native->alive);
+    native->webview->add_NavigationCompleted(webview2::navigationDone([native, alive](ICoreWebView2NavigationCompletedEventArgs* args) {
+        if (alive.expired() || native->failed) {
+            return;
+        }
+        BOOL success = FALSE;
+        if (!checkWebView(native, args->get_IsSuccess(&success), "Reading the navigation result failed")) {
+            return;
+        }
+        if (!success) {
+            COREWEBVIEW2_WEB_ERROR_STATUS status{};
+            args->get_WebErrorStatus(&status);
+            failWebView(native, "Loading the page failed (WebView2 web error " + std::to_string(static_cast<int>(status)) + ").");
+            return;
+        }
+        native->stage = "Waiting for the page to report that it's ready";
+    }), &native->navigationToken);
     sendPendingScripts(native);
 }
 
@@ -466,6 +521,11 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
     switch (message) {
+        case WM_TIMER:
+            if (wParam == 1 && !native->pageLoaded) {
+                failWebView(native, native->stage + " took too long, so the page didn't report that it's ready.");
+            }
+            return 0;
         case WM_SIZE:
             resizeWebView(native);
             syncWebViewVisibility(native);
@@ -586,7 +646,11 @@ void NativeWindowDeleter::operator()(NativeWindow* native) const {
     if (!native) {
         return;
     }
+    native->alive.reset();
     native->destroying = true;
+    if (native->hwnd) {
+        KillTimer(native->hwnd, 1);
+    }
     if (native->transparent && native->hwnd) {
         composition::revokeDropTarget(native->hwnd);
     }
@@ -742,37 +806,52 @@ void WebViewWindow::platformOpen() {
         native->surface.create(native->hwnd);
     }
 
+    if (options.startupTimeout > std::chrono::seconds::zero()) {
+        SetTimer(native->hwnd, 1, static_cast<UINT>(options.startupTimeout.count() * 1000), nullptr);
+    }
     const std::string url = devUrl();
     const std::string page = html();
-    auto onEnvironment = [native, url, page](HRESULT result, ICoreWebView2Environment* environment) {
-        if (FAILED(result) || !environment) {
-            showError("The web view couldn't start, so the window has been closed. Is the WebView2 runtime installed?");
-            native->owner->close();
+    const auto alive = std::weak_ptr<bool>(native->alive);
+    auto onEnvironment = [native, alive, url, page](HRESULT result, ICoreWebView2Environment* environment) {
+        if (alive.expired() || native->failed) {
             return;
         }
+        if (!checkWebView(native, result, "Creating the WebView2 environment failed")) {
+            return;
+        }
+        if (!environment) {
+            failWebView(native, "WebView2 returned no environment. Is the WebView2 runtime installed?");
+            return;
+        }
+        native->stage = "Creating the WebView2 controller";
         auto navigate = [native, url, page] {
+            native->stage = "Loading the page";
             if (!url.empty()) {
-                native->webview->Navigate(toWide(url).c_str());
+                checkWebView(native, native->webview->Navigate(toWide(url).c_str()), "Navigating to the page failed");
             } else {
-                native->webview->NavigateToString(toWide(page).c_str());
+                checkWebView(native, native->webview->NavigateToString(toWide(page).c_str()), "Loading the built-in page failed");
             }
         };
         if (native->transparent) {
             ICoreWebView2Environment3* environment3 = nullptr;
             if (FAILED(environment->QueryInterface(IID_ICoreWebView2Environment3, reinterpret_cast<void**>(&environment3)))) {
-                showError("The see-through page needs a newer WebView2 runtime, so the window has been closed.");
-                native->owner->close();
+                failWebView(native, "The see-through page needs a newer WebView2 runtime.");
                 return;
             }
             environment3->CreateCoreWebView2CompositionController(
                 native->hwnd,
-                webview2::compositionControllerDone([native, navigate](HRESULT controllerResult,
-                                                                       ICoreWebView2CompositionController* compositionController) {
+                webview2::compositionControllerDone([native, alive, navigate](HRESULT controllerResult,
+                                                                              ICoreWebView2CompositionController* compositionController) {
+                    if (alive.expired() || native->failed) {
+                        return;
+                    }
                     ICoreWebView2Controller* controller = nullptr;
-                    if (FAILED(controllerResult) || !compositionController ||
-                        FAILED(compositionController->QueryInterface(IID_ICoreWebView2Controller, reinterpret_cast<void**>(&controller)))) {
-                        showError("The web view couldn't be attached to its window, so the window has been closed.");
-                        native->owner->close();
+                    if (!checkWebView(native, controllerResult, "Creating the WebView2 controller failed") || !compositionController) {
+                        if (!native->failed) failWebView(native, "WebView2 returned no controller.");
+                        return;
+                    }
+                    if (FAILED(compositionController->QueryInterface(IID_ICoreWebView2Controller, reinterpret_cast<void**>(&controller)))) {
+                        failWebView(native, "The web view couldn't be attached to its window.");
                         return;
                     }
                     attachCompositionWebView(native, compositionController, controller);
@@ -782,19 +861,33 @@ void WebViewWindow::platformOpen() {
             environment3->Release();
             return;
         }
-        environment->CreateCoreWebView2Controller(
-            native->hwnd, webview2::controllerDone([native, navigate](HRESULT controllerResult, ICoreWebView2Controller* controller) {
-                if (FAILED(controllerResult) || !controller) {
-                    showError("The web view couldn't be attached to its window, so the window has been closed.");
-                    native->owner->close();
-                    return;
-                }
-                attachWebView(native, controller);
-                navigate();
-            }));
+        checkWebView(native, environment->CreateCoreWebView2Controller(
+                                 native->hwnd, webview2::controllerDone([native, alive, navigate](HRESULT controllerResult,
+                                                                                                  ICoreWebView2Controller* controller) {
+                                     if (alive.expired() || native->failed) {
+                                         return;
+                                     }
+                                     if (!checkWebView(native, controllerResult, "Creating the WebView2 controller failed") || !controller) {
+                                         if (!native->failed) failWebView(native, "WebView2 returned no controller.");
+                                         return;
+                                     }
+                                     attachWebView(native, controller);
+                                     if (!native->failed) navigate();
+                                 })),
+                     "Starting the WebView2 controller failed");
     };
+    if (!options.webViewDataFolder.empty()) {
+        std::error_code error;
+        std::filesystem::create_directories(options.webViewDataFolder, error);
+        if (error) {
+            throw std::runtime_error("The WebView2 data folder couldn't be created: " + options.webViewDataFolder.string());
+        }
+    }
+    const std::filesystem::path dataFolder = options.webViewDataFolder;
     auto createEnvironment = loaderFunction<CreateEnvironmentFn>("CreateCoreWebView2EnvironmentWithOptions");
-    createEnvironment(nullptr, nullptr, nullptr, webview2::environmentDone(onEnvironment));
+    checkWebView(native, createEnvironment(nullptr, dataFolder.empty() ? nullptr : dataFolder.c_str(), nullptr,
+                                           webview2::environmentDone(onEnvironment)),
+                 "Starting the WebView2 environment failed");
 
     if (options.keepBelow) {
         SetWindowPos(native->hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -890,7 +983,12 @@ void offerLink(const std::string& message, const std::string& link) {
 // Windows takes each window's icon from the executable's resource, so there's nothing to set here.
 void setApplicationIcon(const std::string&) {}
 
+namespace {
+void initializeTaskWindow();
+}
+
 void initializeWindowing() {
+    initializeTaskWindow();
     requireWindowingRuntime();
 }
 
@@ -936,30 +1034,66 @@ void WebViewWindow::platformRunScript(const std::string& script) {
     }
 }
 
+void WebViewWindow::platformPageReady() {
+    if (native_ && native_->hwnd) {
+        KillTimer(native_->hwnd, 1);
+        showLoadedPage(native_.get());
+    }
+}
+
 namespace {
 
 const UINT kRunTask = WM_APP + 1;
-DWORD gUiThread = 0;
+HWND taskWindow = nullptr;
+
+// Runs each task posted to the task window, on the thread that owns it. A task that throws stops the event loop with the error shown.
+LRESULT CALLBACK taskWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message != kRunTask) {
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+    std::unique_ptr<std::function<void()>> task(reinterpret_cast<std::function<void()>*>(lParam));
+    try {
+        (*task)();
+    } catch (const std::exception& error) {
+        reportFatalError(error.what());
+    }
+    return 0;
+}
+
+// A message-only window that receives the tasks. Unlike a thread message, a post to it doesn't depend on the event loop having
+// started, or on the thread's ID being known.
+void initializeTaskWindow() {
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = taskWindowProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = L"WebViewWindowTasks";
+    if (!RegisterClassW(&windowClass)) {
+        throw std::runtime_error("The task window class couldn't be registered.");
+    }
+    taskWindow = CreateWindowExW(0, windowClass.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, nullptr);
+    if (!taskWindow) {
+        throw std::runtime_error("The task window couldn't be created.");
+    }
+}
 
 }  // namespace
 
 void runEventLoop() {
-    gUiThread = GetCurrentThreadId();
     MSG message;
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-        if (message.message == kRunTask && !message.hwnd) {
-            auto* task = reinterpret_cast<std::function<void()>*>(message.lParam);
-            (*task)();
-            delete task;
-            continue;
-        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
 }
 
 void runOnUiThread(std::function<void()> task) {
-    PostThreadMessageW(gUiThread, kRunTask, 0, reinterpret_cast<LPARAM>(new std::function<void()>(std::move(task))));
+    auto pending = std::make_unique<std::function<void()>>(std::move(task));
+    if (!taskWindow || !PostMessageW(taskWindow, kRunTask, 0, reinterpret_cast<LPARAM>(pending.get()))) {
+        showError("A task for the window couldn't be delivered (Windows error " + std::to_string(GetLastError()) + ").");
+        stopEventLoop();
+        return;
+    }
+    pending.release();
 }
 
 void stopEventLoop() {

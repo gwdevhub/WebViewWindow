@@ -18,7 +18,7 @@ ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler* compositio
 ICoreWebView2CursorChangedEventHandler* cursorChanged(std::function<void(ICoreWebView2CompositionController*)> changed);
 ICoreWebView2WebMessageReceivedEventHandler* messageReceived(std::function<void(ICoreWebView2WebMessageReceivedEventArgs*)> received);
 ICoreWebView2ProcessFailedEventHandler* processFailed(std::function<void(ICoreWebView2ProcessFailedEventArgs*)> failed);
-ICoreWebView2NavigationCompletedEventHandler* navigationDone(std::function<void()> done);
+ICoreWebView2NavigationCompletedEventHandler* navigationDone(std::function<void(ICoreWebView2NavigationCompletedEventArgs*)> done);
 ICoreWebView2ExecuteScriptCompletedHandler* scriptDone();
 
 }  // namespace webview2
