@@ -6,6 +6,7 @@
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
 
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -16,6 +17,10 @@ struct NativeWindow {
     GtkWidget* window = nullptr;
     WebKitWebView* view = nullptr;
     WebKitUserContentManager* manager = nullptr;
+    // Set while the user drags or resizes the window, so its edges snap to the grid when the drag ends. The frame it began with is
+    // what the snapping compares against.
+    bool snapping = false;
+    Rect dragStart;
 };
 
 namespace {
@@ -70,6 +75,10 @@ struct GtkApi {
     void (*main_loop)() = nullptr;
     void (*main_quit)() = nullptr;
     guint (*idle_add)(GSourceFunc, gpointer) = nullptr;
+    guint (*timeout_add)(guint, GSourceFunc, gpointer) = nullptr;
+    void* (*display_get_default)() = nullptr;
+    void (*display_get_pointer)(void*, void*, gint*, gint*, guint*) = nullptr;
+    gint (*widget_get_scale_factor)(GtkWidget*) = nullptr;
     WebKitUserContentManager* (*user_content_manager_new)() = nullptr;
     gboolean (*user_content_manager_register_script_message_handler_with_reply)(WebKitUserContentManager*, const gchar*,
                                                                                 const gchar*) = nullptr;
@@ -120,6 +129,10 @@ GtkApi loadApi() {
     bind(api.window_deiconify, library, "gtk_window_deiconify");
     bind(api.window_begin_resize_drag, library, "gtk_window_begin_resize_drag");
     bind(api.window_begin_move_drag, library, "gtk_window_begin_move_drag");
+    bind(api.timeout_add, library, "g_timeout_add");
+    bind(api.display_get_default, library, "gdk_display_get_default");
+    bind(api.display_get_pointer, library, "gdk_display_get_pointer");
+    bind(api.widget_get_scale_factor, library, "gtk_widget_get_scale_factor");
     bind(api.window_iconify, library, "gtk_window_iconify");
     bind(api.window_maximize, library, "gtk_window_maximize");
     bind(api.window_unmaximize, library, "gtk_window_unmaximize");
@@ -330,10 +343,105 @@ void WebViewWindow::platformPresent() {
     api().window_present_with_time(window, serverTime(native_->window));
 }
 
+namespace {
+
+// Windows snaps the edges of a move or resize to this grid, in screen pixels. The window manager does the dragging on Linux, so the
+// grid is applied once the button is let go, to the edges the drag moved.
+constexpr int kSnapGrid = 8;
+constexpr guint kDragPollMilliseconds = 20;
+constexpr guint kButton1Mask = 1u << 8;
+
+// The logical coordinate nearest to a point on the grid of screen pixels, which are the logical pixels times the scale.
+int snapToGrid(int logical, int scale) {
+    const long screen = std::lround(static_cast<double>(logical) * scale / kSnapGrid) * kSnapGrid;
+    return static_cast<int>(std::lround(static_cast<double>(screen) / scale));
+}
+
+bool buttonHeld() {
+    guint mask = 0;
+    api().display_get_pointer(api().display_get_default(), nullptr, nullptr, nullptr, &mask);
+    return (mask & kButton1Mask) != 0;
+}
+
+// The window's frame as GTK reports it, in logical pixels.
+Rect frameOf(GtkWidget* widget) {
+    auto* window = reinterpret_cast<GtkWindow*>(widget);
+    gint x = 0;
+    gint y = 0;
+    gint width = 0;
+    gint height = 0;
+    api().window_get_position(window, &x, &y);
+    api().window_get_size(window, &width, &height);
+    return Rect{x, y, width, height};
+}
+
+// Moves the window to the grid. A move keeps its size, so both corners snap. A resize snaps only the edges it moved, as Windows does.
+void snapDroppedFrame(NativeWindow* native) {
+    const Rect start = native->dragStart;
+    const Rect frame = frameOf(native->window);
+    const int scale = api().widget_get_scale_factor(native->window);
+    Rect target = frame;
+    if (frame.width == start.width && frame.height == start.height) {
+        target.x = snapToGrid(frame.x, scale);
+        target.y = snapToGrid(frame.y, scale);
+    } else {
+        int left = frame.x;
+        int top = frame.y;
+        int right = frame.right();
+        int bottom = frame.y + frame.height;
+        if (left != start.x) {
+            left = snapToGrid(left, scale);
+        }
+        if (right != start.right()) {
+            right = snapToGrid(right, scale);
+        }
+        if (top != start.y) {
+            top = snapToGrid(top, scale);
+        }
+        if (bottom != start.y + start.height) {
+            bottom = snapToGrid(bottom, scale);
+        }
+        target = Rect{left, top, right - left, bottom - top};
+    }
+    auto* window = reinterpret_cast<GtkWindow*>(native->window);
+    if (target.x != frame.x || target.y != frame.y) {
+        api().window_move(window, target.x, target.y);
+    }
+    if (target.width != frame.width || target.height != frame.height) {
+        api().window_resize(window, target.width, target.height);
+    }
+}
+
+// Checks each time the drag's poll fires, until the button is let go; then the dropped frame is snapped.
+gboolean onDragPoll(gpointer data) {
+    auto* native = static_cast<NativeWindow*>(data);
+    if (buttonHeld()) {
+        return TRUE;
+    }
+    if (native->window) {
+        snapDroppedFrame(native);
+    }
+    native->snapping = false;
+    return FALSE;
+}
+
+// Records the frame before the window manager starts the drag, and polls for the button's release.
+void beginSnapping(NativeWindow* native) {
+    if (!native->window || native->snapping) {
+        return;
+    }
+    native->snapping = true;
+    native->dragStart = frameOf(native->window);
+    api().timeout_add(kDragPollMilliseconds, onDragPoll, native);
+}
+
+}  // namespace
+
 // The drags below follow the left button the page saw pressed, from where the pointer is now.
 void WebViewWindow::platformBeginMove() {
     const auto pointer = cursorPosition();
     if (native_ && native_->window && pointer) {
+        beginSnapping(native_.get());
         api().window_begin_move_drag(reinterpret_cast<GtkWindow*>(native_->window), 1, pointer->first, pointer->second,
                                      serverTime(native_->window));
     }
@@ -342,6 +450,7 @@ void WebViewWindow::platformBeginMove() {
 void WebViewWindow::platformBeginResize(ResizeEdge edge) {
     const auto pointer = cursorPosition();
     if (native_ && native_->window && pointer) {
+        beginSnapping(native_.get());
         api().window_begin_resize_drag(reinterpret_cast<GtkWindow*>(native_->window), static_cast<GdkWindowEdge>(edge), 1,
                                        pointer->first, pointer->second, serverTime(native_->window));
     }
