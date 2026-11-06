@@ -34,8 +34,8 @@ public:
     std::string html() const override {
         return "<!doctype html><html><head><meta charset=\"utf-8\"></head>"
                "<body style=\"margin:0;font-family:sans-serif;color:#fff;background:#234\">"
-               "<script>window.webkit.messageHandlers.host.postMessage("
-               "JSON.stringify({id: 1, method: 'ready', args: []}));</script>"
+               "<script>(window.chrome && window.chrome.webview ? window.chrome.webview : window.webkit.messageHandlers.host)"
+               ".postMessage(JSON.stringify({id: 1, method: 'ready', args: []}));</script>"
                "Example window</body></html>";
     }
 
