@@ -6,6 +6,8 @@
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -16,6 +18,16 @@ struct NativeWindow {
     GtkWidget* window = nullptr;
     WebKitWebView* view = nullptr;
     WebKitUserContentManager* manager = nullptr;
+    // Set while the user drags or resizes the window, so its edges snap to the grid when the drag ends. The frame it began with is
+    // what the snapping compares against.
+    bool snapping = false;
+    Rect dragStart;
+    // The window stays hidden until its page has loaded, so it never shows as an empty frame.
+    bool pageLoaded = false;
+    bool wantsVisible = false;
+    bool wantsFocus = false;
+    // Whether a window dropped after a move or resize is kept inside its monitor's work area.
+    bool confined = true;
 };
 
 namespace {
@@ -70,6 +82,16 @@ struct GtkApi {
     void (*main_loop)() = nullptr;
     void (*main_quit)() = nullptr;
     guint (*idle_add)(GSourceFunc, gpointer) = nullptr;
+    guint (*timeout_add)(guint, GSourceFunc, gpointer) = nullptr;
+    void* (*display_get_default)() = nullptr;
+    void (*display_get_pointer)(void*, void*, gint*, gint*, guint*) = nullptr;
+    gint (*widget_get_scale_factor)(GtkWidget*) = nullptr;
+    void (*window_set_icon)(GtkWindow*, GdkPixbuf*) = nullptr;
+    GdkDisplay* (*widget_get_display)(GtkWidget*) = nullptr;
+    GdkSeat* (*display_get_default_seat)(GdkDisplay*) = nullptr;
+    GdkDevice* (*seat_get_pointer)(GdkSeat*) = nullptr;
+    GdkWindow* (*device_get_window_at_position)(GdkDevice*, gint*, gint*) = nullptr;
+    GdkWindow* (*window_get_toplevel)(GdkWindow*) = nullptr;
     WebKitUserContentManager* (*user_content_manager_new)() = nullptr;
     gboolean (*user_content_manager_register_script_message_handler_with_reply)(WebKitUserContentManager*, const gchar*,
                                                                                 const gchar*) = nullptr;
@@ -120,6 +142,16 @@ GtkApi loadApi() {
     bind(api.window_deiconify, library, "gtk_window_deiconify");
     bind(api.window_begin_resize_drag, library, "gtk_window_begin_resize_drag");
     bind(api.window_begin_move_drag, library, "gtk_window_begin_move_drag");
+    bind(api.timeout_add, library, "g_timeout_add");
+    bind(api.display_get_default, library, "gdk_display_get_default");
+    bind(api.display_get_pointer, library, "gdk_display_get_pointer");
+    bind(api.widget_get_scale_factor, library, "gtk_widget_get_scale_factor");
+    bind(api.window_set_icon, library, "gtk_window_set_icon");
+    bind(api.widget_get_display, library, "gtk_widget_get_display");
+    bind(api.display_get_default_seat, library, "gdk_display_get_default_seat");
+    bind(api.seat_get_pointer, library, "gdk_seat_get_pointer");
+    bind(api.device_get_window_at_position, library, "gdk_device_get_window_at_position");
+    bind(api.window_get_toplevel, library, "gdk_window_get_toplevel");
     bind(api.window_iconify, library, "gtk_window_iconify");
     bind(api.window_maximize, library, "gtk_window_maximize");
     bind(api.window_unmaximize, library, "gtk_window_unmaximize");
@@ -177,6 +209,37 @@ void ensureGtk() {
     (void)initialized;
 }
 
+// The launcher's icon, set by setApplicationIcon and given to each window as it opens.
+GdkPixbuf* applicationIcon = nullptr;
+
+// The X server's time, which a window manager needs on a focus or move request. GDK_CURRENT_TIME when it isn't available.
+guint32 serverTime(GtkWidget* widget) {
+    if (!api().x11_server_time) {
+        return GDK_CURRENT_TIME;
+    }
+    GdkWindow* gdkWindow = api().widget_get_window(widget);
+    return gdkWindow ? api().x11_server_time(gdkWindow) : GDK_CURRENT_TIME;
+}
+
+// Shows the window once its page has loaded, if it's wanted yet. Focus goes to it only if it was asked for.
+void showLoadedPage(NativeWindow* native) {
+    native->pageLoaded = true;
+    if (!native->window || !native->wantsVisible) {
+        return;
+    }
+    api().widget_show_all(native->window);
+    if (native->wantsFocus) {
+        native->wantsFocus = false;
+        api().window_present_with_time(reinterpret_cast<GtkWindow*>(native->window), serverTime(native->window));
+    }
+}
+
+void onLoadChanged(WebKitWebView*, WebKitLoadEvent event, gpointer data) {
+    if (event == WEBKIT_LOAD_FINISHED) {
+        showLoadedPage(static_cast<NativeWindow*>(data));
+    }
+}
+
 // A script message from the page: window.webkit.messageHandlers.host.postMessage(text).
 void onScriptMessage(WebKitUserContentManager*, JSCValue* value, WebKitUserMessage*, gpointer data) {
     auto* window = static_cast<WebViewWindow*>(data);
@@ -194,7 +257,7 @@ gboolean onFocusOut(GtkWidget*, GdkEvent*, gpointer data) {
 }
 
 // WebKit runs the page in a process of its own, which can die. The page is loaded again from the window's own page, since
-// it asks the host for its state as it loads, and the user is told why the fence blanked for a moment.
+// it asks the host for its state as it loads, and the user is told why the page blanked for a moment.
 gboolean onWebProcessCrashed(WebKitWebView* view, gpointer data) {
     auto* window = static_cast<WebViewWindow*>(data);
     const std::string url = window->devUrl();
@@ -203,8 +266,9 @@ gboolean onWebProcessCrashed(WebKitWebView* view, gpointer data) {
     } else {
         api().web_view_load_html(view, window->html().c_str(), nullptr);
     }
-    runOnUiThread([] {
-        showError("The page of a fence stopped unexpectedly, so it has been loaded again.");
+    const std::string message = window->pageReloadedMessage();
+    runOnUiThread([message] {
+        showError(message);
     });
     return TRUE;
 }
@@ -268,6 +332,11 @@ void WebViewWindow::platformOpen() {
         }
     }
 
+    // The icon is set on each window: the taskbar and the window list read the window's own icon.
+    if (applicationIcon) {
+        gtk.window_set_icon(window, applicationIcon);
+    }
+
     native.manager = gtk.user_content_manager_new();
     // The signal is connected before the handler is registered, as WebKitGTK recommends.
     gtk.g_signal_connect_data(native.manager, "script-message-with-reply-received::host",
@@ -281,6 +350,11 @@ void WebViewWindow::platformOpen() {
     gtk.container_add(reinterpret_cast<GtkContainer*>(native.window), reinterpret_cast<GtkWidget*>(native.view));
     gtk.g_signal_connect_data(native.view, "web-process-crashed", reinterpret_cast<GCallback>(onWebProcessCrashed), this,
                               nullptr, static_cast<GConnectFlags>(0));
+
+    native.wantsVisible = options_.visible;
+    native.confined = options_.confinedToWorkArea;
+    gtk.g_signal_connect_data(native.view, "load-changed", reinterpret_cast<GCallback>(onLoadChanged), &native, nullptr,
+                              static_cast<GConnectFlags>(0));
 
     gtk.g_signal_connect_data(native.window, "delete-event", reinterpret_cast<GCallback>(onDeleteEvent), this, nullptr,
                               static_cast<GConnectFlags>(0));
@@ -300,26 +374,19 @@ void WebViewWindow::platformOpen() {
     } else {
         gtk.web_view_load_html(native.view, html().c_str(), nullptr);
     }
-    if (options_.visible) {
-        gtk.widget_show_all(native.window);
-    }
 }
 
-namespace {
-
-// The X server's time, which a window manager needs on a focus or move request. GDK_CURRENT_TIME when it isn't available.
-guint32 serverTime(GtkWidget* widget) {
-    if (!api().x11_server_time) {
-        return GDK_CURRENT_TIME;
-    }
-    GdkWindow* gdkWindow = api().widget_get_window(widget);
-    return gdkWindow ? api().x11_server_time(gdkWindow) : GDK_CURRENT_TIME;
+void WebViewWindow::platformUnload() {
+    native_.reset();
 }
-
-}  // namespace
 
 void WebViewWindow::platformPresent() {
     if (!native_ || !native_->window) {
+        return;
+    }
+    native_->wantsVisible = true;
+    if (!native_->pageLoaded) {
+        native_->wantsFocus = true;
         return;
     }
     // Restores it from minimised, shows it if it's hidden, and asks the window manager to raise it and give it the focus. The
@@ -330,10 +397,123 @@ void WebViewWindow::platformPresent() {
     api().window_present_with_time(window, serverTime(native_->window));
 }
 
+namespace {
+
+// Windows snaps the edges of a move or resize to this grid, in screen pixels. The window manager does the dragging on Linux, so the
+// grid is applied once the button is let go, to the edges the drag moved.
+constexpr int kSnapGrid = 8;
+constexpr guint kDragPollMilliseconds = 20;
+constexpr guint kButton1Mask = 1u << 8;
+
+// The logical coordinate nearest to a point on the grid of screen pixels, which are the logical pixels times the scale.
+int snapToGrid(int logical, int scale) {
+    const long screen = std::lround(static_cast<double>(logical) * scale / kSnapGrid) * kSnapGrid;
+    return static_cast<int>(std::lround(static_cast<double>(screen) / scale));
+}
+
+bool buttonHeld() {
+    guint mask = 0;
+    api().display_get_pointer(api().display_get_default(), nullptr, nullptr, nullptr, &mask);
+    return (mask & kButton1Mask) != 0;
+}
+
+// The window's frame as GTK reports it, in logical pixels.
+Rect frameOf(GtkWidget* widget) {
+    auto* window = reinterpret_cast<GtkWindow*>(widget);
+    gint x = 0;
+    gint y = 0;
+    gint width = 0;
+    gint height = 0;
+    api().window_get_position(window, &x, &y);
+    api().window_get_size(window, &width, &height);
+    return Rect{x, y, width, height};
+}
+
+// Moves the window to the grid. A move keeps its size, so both corners snap. A resize snaps only the edges it moved, as Windows does.
+void snapDroppedFrame(NativeWindow* native) {
+    const Rect start = native->dragStart;
+    const Rect frame = frameOf(native->window);
+    const int scale = api().widget_get_scale_factor(native->window);
+    Rect target = frame;
+    if (frame.width == start.width && frame.height == start.height) {
+        target.x = snapToGrid(frame.x, scale);
+        target.y = snapToGrid(frame.y, scale);
+    } else {
+        int left = frame.x;
+        int top = frame.y;
+        int right = frame.right();
+        int bottom = frame.y + frame.height;
+        if (left != start.x) {
+            left = snapToGrid(left, scale);
+        }
+        if (right != start.right()) {
+            right = snapToGrid(right, scale);
+        }
+        if (top != start.y) {
+            top = snapToGrid(top, scale);
+        }
+        if (bottom != start.y + start.height) {
+            bottom = snapToGrid(bottom, scale);
+        }
+        target = Rect{left, top, right - left, bottom - top};
+    }
+    auto* window = reinterpret_cast<GtkWindow*>(native->window);
+    if (target.x != frame.x || target.y != frame.y) {
+        api().window_move(window, target.x, target.y);
+    }
+    if (target.width != frame.width || target.height != frame.height) {
+        api().window_resize(window, target.width, target.height);
+    }
+}
+
+// A confined window that is dropped is moved back inside its monitor's work area. One larger than the area keeps its top-left corner.
+void confineDroppedFrame(NativeWindow* native) {
+    const Rect frame = frameOf(native->window);
+    const auto area = workAreaAt(frame);
+    if (!area) {
+        return;
+    }
+    const int x = std::max(area->x, std::min(frame.x, area->right() - frame.width));
+    const int y = std::max(area->y, std::min(frame.y, area->bottom() - frame.height));
+    if (x != frame.x || y != frame.y) {
+        api().window_move(reinterpret_cast<GtkWindow*>(native->window), x, y);
+    }
+}
+
+// Checks each time the drag's poll fires, until the button is let go; then the dropped frame is snapped, and kept in the work area
+// when the window is confined to it. While the button is held the window manager moves the window freely.
+gboolean onDragPoll(gpointer data) {
+    auto* native = static_cast<NativeWindow*>(data);
+    if (buttonHeld()) {
+        return TRUE;
+    }
+    if (native->window) {
+        snapDroppedFrame(native);
+        if (native->confined) {
+            confineDroppedFrame(native);
+        }
+    }
+    native->snapping = false;
+    return FALSE;
+}
+
+// Records the frame before the window manager starts the drag, and polls for the button's release.
+void beginSnapping(NativeWindow* native) {
+    if (!native->window || native->snapping) {
+        return;
+    }
+    native->snapping = true;
+    native->dragStart = frameOf(native->window);
+    api().timeout_add(kDragPollMilliseconds, onDragPoll, native);
+}
+
+}  // namespace
+
 // The drags below follow the left button the page saw pressed, from where the pointer is now.
 void WebViewWindow::platformBeginMove() {
     const auto pointer = cursorPosition();
     if (native_ && native_->window && pointer) {
+        beginSnapping(native_.get());
         api().window_begin_move_drag(reinterpret_cast<GtkWindow*>(native_->window), 1, pointer->first, pointer->second,
                                      serverTime(native_->window));
     }
@@ -342,6 +522,7 @@ void WebViewWindow::platformBeginMove() {
 void WebViewWindow::platformBeginResize(ResizeEdge edge) {
     const auto pointer = cursorPosition();
     if (native_ && native_->window && pointer) {
+        beginSnapping(native_.get());
         api().window_begin_resize_drag(reinterpret_cast<GtkWindow*>(native_->window), static_cast<GdkWindowEdge>(edge), 1,
                                        pointer->first, pointer->second, serverTime(native_->window));
     }
@@ -373,6 +554,10 @@ void WebViewWindow::platformClose() {
 
 void WebViewWindow::platformShow(bool visible) {
     if (!native_ || !native_->window) {
+        return;
+    }
+    native_->wantsVisible = visible;
+    if (!native_->pageLoaded) {
         return;
     }
     if (visible) {
@@ -411,6 +596,25 @@ std::optional<Rect> WebViewWindow::platformFrame() const {
     api().window_get_position(window, &x, &y);
     api().window_get_size(window, &width, &height);
     return Rect{x, y, width, height};
+}
+
+bool WebViewWindow::containsPointer() const {
+    if (!native_ || !native_->window) {
+        return false;
+    }
+    GdkWindow* window = api().widget_get_window(native_->window);
+    GdkDisplay* display = api().widget_get_display(native_->window);
+    GdkSeat* seat = display ? api().display_get_default_seat(display) : nullptr;
+    GdkDevice* pointer = seat ? api().seat_get_pointer(seat) : nullptr;
+    GdkWindow* underPointer = pointer ? api().device_get_window_at_position(pointer, nullptr, nullptr) : nullptr;
+    // Wayland has no global coordinates; compare the actual windows, including WebKit's child windows.
+    return window && underPointer && api().window_get_toplevel(underPointer) == window;
+}
+
+void WebViewWindow::platformConfine(bool confined) {
+    if (native_) {
+        native_->confined = confined;
+    }
 }
 
 void WebViewWindow::platformSetSkipTaskbar() {
@@ -468,6 +672,45 @@ void offerLink(const std::string& message, const std::string&) {
 void initializeWindowing() {
     requireWindowingRuntime();
     ensureGtk();
+}
+
+void setApplicationIcon(const std::string& png) {
+    ensureGtk();
+    void* library = dlopen("libgtk-3.so.0", RTLD_LAZY | RTLD_LOCAL);
+    if (!library) {
+        return;
+    }
+    using LoaderNew = GdkPixbufLoader* (*)();
+    using LoaderWrite = gboolean (*)(GdkPixbufLoader*, const guchar*, gsize, GError**);
+    using LoaderClose = gboolean (*)(GdkPixbufLoader*, GError**);
+    using LoaderPixbuf = GdkPixbuf* (*)(GdkPixbufLoader*);
+    using Scale = GdkPixbuf* (*)(const GdkPixbuf*, gint, gint, GdkInterpType);
+    using Unref = void (*)(gpointer);
+    using Size = int (*)(const GdkPixbuf*);
+    auto loaderNew = reinterpret_cast<LoaderNew>(dlsym(library, "gdk_pixbuf_loader_new"));
+    auto loaderWrite = reinterpret_cast<LoaderWrite>(dlsym(library, "gdk_pixbuf_loader_write"));
+    auto loaderClose = reinterpret_cast<LoaderClose>(dlsym(library, "gdk_pixbuf_loader_close"));
+    auto loaderPixbuf = reinterpret_cast<LoaderPixbuf>(dlsym(library, "gdk_pixbuf_loader_get_pixbuf"));
+    auto scale = reinterpret_cast<Scale>(dlsym(library, "gdk_pixbuf_scale_simple"));
+    auto unref = reinterpret_cast<Unref>(dlsym(library, "g_object_unref"));
+    auto width = reinterpret_cast<Size>(dlsym(library, "gdk_pixbuf_get_width"));
+    auto height = reinterpret_cast<Size>(dlsym(library, "gdk_pixbuf_get_height"));
+    if (!loaderNew || !loaderWrite || !loaderClose || !loaderPixbuf || !scale || !unref || !width || !height) {
+        return;
+    }
+    GdkPixbufLoader* loader = loaderNew();
+    const bool written = loaderWrite(loader, reinterpret_cast<const guchar*>(png.data()), png.size(), nullptr) &&
+                         loaderClose(loader, nullptr);
+    GdkPixbuf* decoded = written ? loaderPixbuf(loader) : nullptr;
+    // The picture is kept at the size it was made, so it isn't stretched; the copy is owned here, and the loader's picture is released.
+    GdkPixbuf* scaled = decoded ? scale(decoded, width(decoded), height(decoded), GDK_INTERP_BILINEAR) : nullptr;
+    unref(loader);
+    if (scaled) {
+        if (applicationIcon) {
+            unref(applicationIcon);
+        }
+        applicationIcon = scaled;
+    }
 }
 
 void runEventLoop() {

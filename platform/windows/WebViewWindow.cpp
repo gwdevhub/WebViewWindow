@@ -76,6 +76,11 @@ struct NativeWindow {
     ICoreWebView2* webview = nullptr;
     EventRegistrationToken messageToken{};
     EventRegistrationToken processFailedToken{};
+    EventRegistrationToken navigationToken{};
+    // The window stays hidden until its page has loaded, so it never shows as an empty frame.
+    bool pageLoaded = false;
+    bool wantsVisible = false;
+    bool wantsFocus = false;
     // Scripts asked for before the web view exists. They run once it's ready.
     std::vector<std::wstring> pendingScripts;
     // Set while the window is being destroyed by its owner, so no close notification is sent for it.
@@ -89,6 +94,8 @@ struct NativeWindow {
     // Set while the user drags or resizes the window, so the edges snap to the grid. The window's rect and the cursor's point
     // when the drag began are what the snapping works from.
     bool snapping = false;
+    // Whether a move or resize is kept inside the window's monitor's work area, as the window's options say.
+    bool confined = true;
     RECT dragStart{};
     POINT dragCursor{};
     // A see-through window's move follows the cursor from the press itself, not through the system's move loop, which starts
@@ -115,6 +122,24 @@ void resizeWebView(NativeWindow* native) {
 void syncWebViewVisibility(NativeWindow* native) {
     if (native->controller && native->hwnd) {
         native->controller->put_IsVisible(IsWindowVisible(native->hwnd) && !IsIconic(native->hwnd));
+    }
+}
+
+// Shows the window once its page has loaded, if it's wanted yet. Focus goes to it only if it was asked for. Later loads, such as
+// a page reloaded after its process died, leave the window as the user has it.
+void showLoadedPage(NativeWindow* native) {
+    if (native->pageLoaded) {
+        return;
+    }
+    native->pageLoaded = true;
+    if (!native->hwnd || !native->wantsVisible) {
+        return;
+    }
+    ShowWindow(native->hwnd, SW_SHOW);
+    syncWebViewVisibility(native);
+    if (native->wantsFocus) {
+        native->wantsFocus = false;
+        SetForegroundWindow(native->hwnd);
     }
 }
 
@@ -159,7 +184,10 @@ void recoverFromProcessFailure(NativeWindow* native, COREWEBVIEW2_PROCESS_FAILED
             } else {
                 native->webview->NavigateToString(toWide(native->owner->html()).c_str());
             }
-            runOnUiThread([] { showError("The page of a fence stopped unexpectedly, so it has been loaded again."); });
+            {
+                const std::string message = native->owner->pageReloadedMessage();
+                runOnUiThread([message] { showError(message); });
+            }
             return;
         }
         default:
@@ -195,6 +223,7 @@ void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
             recoverFromProcessFailure(native, kind);
         }),
         &native->processFailedToken);
+    native->webview->add_NavigationCompleted(webview2::navigationDone([native] { showLoadedPage(native); }), &native->navigationToken);
     sendPendingScripts(native);
 }
 
@@ -317,7 +346,9 @@ void clampEdgesToWorkArea(RECT* rect, WPARAM edge) {
 void moveWithCursor(NativeWindow* native) {
     RECT target = native->pressRect;
     snapPosition(&target, native->pressRect, cursorSince(native->pressCursor));
-    clampToWorkArea(&target);
+    if (native->confined) {
+        clampToWorkArea(&target);
+    }
     SetWindowPos(native->hwnd, nullptr, target.left, target.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
@@ -451,7 +482,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             if (native->snapping) {
                 auto* rect = reinterpret_cast<RECT*>(lParam);
                 snapPosition(rect, native->dragStart, cursorSince(native->dragCursor));
-                clampToWorkArea(rect);
+                if (native->confined) {
+                    clampToWorkArea(rect);
+                }
                 return TRUE;
             }
             return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -459,7 +492,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             if (native->snapping) {
                 auto* rect = reinterpret_cast<RECT*>(lParam);
                 snapSize(rect, native->dragStart, cursorSince(native->dragCursor), wParam);
-                clampEdgesToWorkArea(rect, wParam);
+                if (native->confined) {
+                    clampEdgesToWorkArea(rect, wParam);
+                }
                 enforceMinimumSize(rect, wParam, native->minWidth, native->minHeight);
                 return TRUE;
             }
@@ -524,6 +559,9 @@ void registerWindowClass() {
         windowClass.lpfnWndProc = windowProc;
         windowClass.hInstance = GetModuleHandleW(nullptr);
         windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW, as a wide-string resource id
+        // The executable's icon, which the build puts in as resource 1. Without one, the window keeps the default icon.
+        windowClass.hIcon = LoadIconW(windowClass.hInstance, MAKEINTRESOURCEW(1));
+        windowClass.hIconSm = windowClass.hIcon;
         // Shows until the page has drawn, so the window doesn't flash white on start.
         windowClass.hbrBackground = CreateSolidBrush(RGB(24, 24, 24));
         windowClass.lpszClassName = kWindowClass;
@@ -613,6 +651,12 @@ void applySkipTaskbar(HWND hwnd, bool skip) {
 
 }  // namespace
 
+void WebViewWindow::platformConfine(bool confined) {
+    if (native_) {
+        native_->confined = confined;
+    }
+}
+
 void WebViewWindow::platformSetSkipTaskbar() {
     if (native_ && native_->hwnd) {
         applySkipTaskbar(native_->hwnd, options_.skipTaskbar);
@@ -680,6 +724,7 @@ void WebViewWindow::platformOpen() {
     const auto area = workArea();
     // Sizes are in device-independent pixels, so they grow with the display's DPI.
     const UINT dpi = GetDpiForSystem();
+    native->confined = options.confinedToWorkArea;
     native->minWidth = MulDiv(scaledSize(options.minWidth), dpi, 96);
     native->minHeight = MulDiv(scaledSize(options.minHeight), dpi, 96);
     const int width = std::max(MulDiv(scaledSize(options.width), dpi, 96), native->minWidth);
@@ -754,11 +799,27 @@ void WebViewWindow::platformOpen() {
     if (options.keepBelow) {
         SetWindowPos(native->hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
-    ShowWindow(native->hwnd, options.visible ? SW_SHOW : SW_HIDE);
+    // Shown once the page has loaded. The window is created without WS_VISIBLE, so it stays hidden until then.
+    native->wantsVisible = options.visible;
+}
+
+void WebViewWindow::platformUnload() {
+    native_.reset();
+}
+
+bool WebViewWindow::containsPointer() const {
+    const auto pointer = cursorPosition();
+    const auto bounds = frame();
+    return pointer && bounds && bounds->contains(pointer->first, pointer->second);
 }
 
 void WebViewWindow::platformPresent() {
     if (native_ && native_->hwnd) {
+        native_->wantsVisible = true;
+        if (!native_->pageLoaded) {
+            native_->wantsFocus = true;
+            return;
+        }
         // Restores the window if it's minimised, then asks for the foreground. Windows may keep the focus where it is.
         ShowWindow(native_->hwnd, IsIconic(native_->hwnd) ? SW_RESTORE : SW_SHOW);
         syncWebViewVisibility(native_.get());
@@ -768,8 +829,11 @@ void WebViewWindow::platformPresent() {
 
 void WebViewWindow::platformShow(bool visible) {
     if (native_ && native_->hwnd) {
-        ShowWindow(native_->hwnd, visible ? SW_SHOW : SW_HIDE);
-        syncWebViewVisibility(native_.get());
+        native_->wantsVisible = visible;
+        if (native_->pageLoaded) {
+            ShowWindow(native_->hwnd, visible ? SW_SHOW : SW_HIDE);
+            syncWebViewVisibility(native_.get());
+        }
     }
 }
 
@@ -822,6 +886,9 @@ void offerLink(const std::string& message, const std::string& link) {
         ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 }
+
+// Windows takes each window's icon from the executable's resource, so there's nothing to set here.
+void setApplicationIcon(const std::string&) {}
 
 void initializeWindowing() {
     requireWindowingRuntime();

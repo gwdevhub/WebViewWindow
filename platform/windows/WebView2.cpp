@@ -40,6 +40,10 @@ template <>
 struct CallbackIid<ICoreWebView2ProcessFailedEventHandler> {
     static const IID& value() { return IID_ICoreWebView2ProcessFailedEventHandler; }
 };
+template <>
+struct CallbackIid<ICoreWebView2NavigationCompletedEventHandler> {
+    static const IID& value() { return IID_ICoreWebView2NavigationCompletedEventHandler; }
+};
 
 // A COM object for a WebView2 callback. The concrete handlers below supply each interface's Invoke.
 template <typename Iface>
@@ -142,6 +146,18 @@ private:
     std::function<void(ICoreWebView2ProcessFailedEventArgs*)> failed_;
 };
 
+class NavigationDone : public ComObject<ICoreWebView2NavigationCompletedEventHandler> {
+public:
+    explicit NavigationDone(std::function<void()> done) : done_(std::move(done)) {}
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* /*sender*/, ICoreWebView2NavigationCompletedEventArgs* /*args*/) override {
+        done_();
+        return S_OK;
+    }
+
+private:
+    std::function<void()> done_;
+};
+
 class ScriptDone : public ComObject<ICoreWebView2ExecuteScriptCompletedHandler> {
 public:
     HRESULT STDMETHODCALLTYPE Invoke(HRESULT /*result*/, LPCWSTR /*json*/) override { return S_OK; }
@@ -172,6 +188,10 @@ ICoreWebView2WebMessageReceivedEventHandler* messageReceived(std::function<void(
 
 ICoreWebView2ProcessFailedEventHandler* processFailed(std::function<void(ICoreWebView2ProcessFailedEventArgs*)> failed) {
     return new ProcessFailed(std::move(failed));
+}
+
+ICoreWebView2NavigationCompletedEventHandler* navigationDone(std::function<void()> done) {
+    return new NavigationDone(std::move(done));
 }
 
 ICoreWebView2ExecuteScriptCompletedHandler* scriptDone() {

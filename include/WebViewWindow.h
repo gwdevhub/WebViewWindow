@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <stdexcept>
@@ -34,6 +36,12 @@ struct WindowOptions {
     bool visible = true;
     // The page sizes the window: its reports through fitToPage set the window's size, in device-independent pixels.
     bool autosize = false;
+    // Whether the window stays inside the work area of the monitor it's on. When it's confined, the window is moved back in when it
+    // opens, is resized, or is dropped after a move or resize, so it never goes past the monitor's edges. When it isn't confined,
+    // the window may go past them, and part of it can be off the screen.
+    bool confinedToWorkArea = true;
+    // How long a hidden window keeps its web view before the web view is freed. A show or present before then keeps it.
+    std::chrono::milliseconds cooldown = std::chrono::minutes(2);
     // Kept under other windows, so the window reads as part of the desktop.
     bool keepBelow = false;
     // Shown on every virtual desktop. Windows has none, so there it does nothing.
@@ -63,12 +71,16 @@ public:
     // Creates the native window and loads the page. Call once, before runEventLoop.
     void open();
 
+    // Shows the window, opening it first if it was never opened or its web view was freed.
     void show();
+    // Hides the window. Its web view is freed after a cooldown, unless the window is shown again first.
     void hide();
     // Brings the window to the front and gives it the focus. A hidden or minimised window is shown and restored first.
     void present();
     // The window's rectangle on the screen, when the platform can give it.
     std::optional<Rect> frame() const;
+    // Whether the pointer is over the window, when the platform can tell.
+    bool containsPointer() const;
     // The window's size in the units resize takes, read back from the screen. Missing when the window isn't open.
     std::optional<std::pair<int, int>> frameUnscaled() const;
 
@@ -90,6 +102,8 @@ public:
     void setTitleBar(bool shown);
     // Keeps the window off the taskbar, or puts it back. Applies straight away when the window is open.
     void setSkipTaskbar(bool skip);
+    // Confines the window to its monitor's work area, or lets it go past the edges. Confining moves the window back in straight away.
+    void setConfinedToWorkArea(bool confined);
     // Start moving or resizing the window, following the pointer's button press on the page.
     void beginMove();
     void beginResize(ResizeEdge edge);
@@ -111,6 +125,8 @@ public:
     virtual std::string html() const { return {}; }
     virtual std::string devUrl() const { return {}; }
     virtual std::string title() const { return options_.title; }
+    // The message shown when the page's process died and the page was loaded again.
+    virtual std::string pageReloadedMessage() const { return "The page stopped unexpectedly, so it has been loaded again."; }
 
     // Called by the platform when the page posts a message, when the user asks to close the window, and after it closes.
     void receive(const std::string& text);
@@ -139,6 +155,10 @@ private:
     void platformSetTitle(const std::string& title);
     // Applies options_.skipTaskbar, which is already updated when it runs.
     void platformSetSkipTaskbar();
+    // Applies whether the window is confined to the work area, which is already updated when it runs.
+    void platformConfine(bool confined);
+    // Destroys the native window and its web view. The window can be opened again after this.
+    void platformUnload();
     void platformBeginMove();
     void platformBeginResize(ResizeEdge edge);
     void platformMinimize();
@@ -150,6 +170,9 @@ private:
     int platformToIndependent(int pixels) const;
     // Moves the window back inside its monitor's work area when it has gone past an edge.
     void keepOnScreen();
+    // Starts the cooldown after which a hidden window frees its web view. A show or present cancels it.
+    void startCooldown();
+    void freeWebView();
 
     WindowOptions options_;
     // The window's size without the UI scale, which is what the page and the settings work in.
@@ -157,6 +180,10 @@ private:
     int baseHeight_ = 0;
     bool visible_ = false;
     bool opened_ = false;
+    // Counts the hides and shows, so a cooldown started by an earlier hide does nothing once the window is shown again.
+    std::uint64_t cooldownGeneration_ = 0;
+    // Expires with the window, so a cooldown still waiting when the window is destroyed does nothing.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     MessageHandler handler_;
     std::unique_ptr<NativeWindow, NativeWindowDeleter> native_;
 };
@@ -197,6 +224,10 @@ void stopEventLoop();
 // The application's name, which the windows' own dialogs use as their title. Set it before a window opens. The default is "Application".
 void setApplicationName(const std::string& name);
 const std::string& applicationName();
+
+// Sets the icon every window shows, from the PNG bytes the host embeds. Windows takes its icon from the executable's resource
+// instead, so there it does nothing.
+void setApplicationIcon(const std::string& png);
 
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but
 // they aren't part of the window.

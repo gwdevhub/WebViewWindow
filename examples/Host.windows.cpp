@@ -1,4 +1,4 @@
-// The desktop functions the host defines for the library. This is the Windows version; the Linux one is left to the application.
+// The desktop functions the host defines for the library on Windows. examples/Host.linux.cpp has the Linux version.
 
 #include <cstdio>
 #include <optional>

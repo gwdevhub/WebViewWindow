@@ -26,17 +26,8 @@ else()
     target_link_libraries(webview_window PUBLIC ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
 
-# The example shows the smallest host: it defines the desktop functions and opens one window.
+# The example application, built on Windows and Linux. examples/ has the shared main and a host for each platform.
 option(WEBVIEW_WINDOW_BUILD_EXAMPLE "Build the example application" ON)
 if(WEBVIEW_WINDOW_BUILD_EXAMPLE)
-    add_executable(webview_window_example example/main.cpp example/Host.cpp)
-    target_link_libraries(webview_window_example PRIVATE webview_window)
-    if(WIN32)
-        target_link_options(webview_window_example PRIVATE -static -mwindows)
-        # WebView2 is loaded at runtime from WebView2Loader.dll, which must sit beside the executable.
-        add_custom_command(TARGET webview_window_example POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/bin/x64/WebView2Loader.dll" "$<TARGET_FILE_DIR:webview_window_example>"
-            VERBATIM)
-    endif()
+    add_subdirectory(examples)
 endif()

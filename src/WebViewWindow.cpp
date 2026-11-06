@@ -1,8 +1,10 @@
 #include "WebViewWindow.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <set>
+#include <thread>
 #include <utility>
 
 
@@ -56,14 +58,27 @@ void WebViewWindow::open() {
     platformOpen();
     opened_ = true;
     keepOnScreen();
+    if (!options_.visible) {
+        startCooldown();
+    }
 }
 
 void WebViewWindow::show() {
+    ++cooldownGeneration_;
+    if (!opened_) {
+        options_.visible = true;
+        open();
+    }
     visible_ = true;
     platformShow(true);
 }
 
 void WebViewWindow::present() {
+    ++cooldownGeneration_;
+    if (!opened_) {
+        options_.visible = true;
+        open();
+    }
     visible_ = true;
     platformPresent();
 }
@@ -71,6 +86,26 @@ void WebViewWindow::present() {
 void WebViewWindow::hide() {
     visible_ = false;
     platformShow(false);
+    startCooldown();
+}
+
+void WebViewWindow::startCooldown() {
+    const std::uint64_t generation = ++cooldownGeneration_;
+    const auto cooldown = options_.cooldown;
+    // The thread only waits. Its task runs on the window's thread, and only if the window still exists and nothing has changed.
+    std::thread([this, alive = std::weak_ptr<bool>(alive_), generation, cooldown] {
+        std::this_thread::sleep_for(cooldown);
+        runOnUiThread([this, alive, generation] {
+            if (!alive.expired() && generation == cooldownGeneration_ && !visible_) {
+                freeWebView();
+            }
+        });
+    }).detach();
+}
+
+void WebViewWindow::freeWebView() {
+    opened_ = false;
+    platformUnload();
 }
 
 void WebViewWindow::resize(int width, int height) {
@@ -129,7 +164,16 @@ void WebViewWindow::move(int x, int y) {
     platformMove(kept.x, kept.y);
 }
 
+void WebViewWindow::setConfinedToWorkArea(bool confined) {
+    options_.confinedToWorkArea = confined;
+    platformConfine(confined);
+    keepOnScreen();
+}
+
 void WebViewWindow::keepOnScreen() {
+    if (!options_.confinedToWorkArea) {
+        return;
+    }
     const auto current = platformFrame();
     if (!current) {
         return;
