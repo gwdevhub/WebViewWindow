@@ -1,12 +1,16 @@
 // A window that the tests drive. The page reports "loaded" once it has loaded. Each line on stdin is a command:
 //   hide, show, present: the window call of the same name, then the state is reported
 //   report: the state is reported
+//   move: a move starts, and follows the pointer until the button is released
+//   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
 //   quit: the event loop stops
-// The state is one line, "visible=<0|1> open=<0|1>": whether the window is shown, and whether it has a native window.
+// The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height>", the window's rectangle on the screen in
+// pixels, or "frame=none" when it has no native window.
 
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -35,7 +39,13 @@ public:
     std::string title() const override { return "WebViewWindow Example"; }
 
     void report() const {
-        std::printf("visible=%d open=%d\n", isVisible() ? 1 : 0, frame() ? 1 : 0);
+        const auto bounds = frame();
+        std::printf("visible=%d open=%d ", isVisible() ? 1 : 0, bounds ? 1 : 0);
+        if (bounds) {
+            std::printf("frame=%d,%d,%d,%d\n", bounds->x, bounds->y, bounds->width, bounds->height);
+        } else {
+            std::printf("frame=none\n");
+        }
         std::fflush(stdout);
     }
 
@@ -48,6 +58,19 @@ private:
         return options;
     }
 };
+
+// The edge a "resize" command names, as the library's ResizeEdge.
+std::optional<ResizeEdge> edgeNamed(const std::string& name) {
+    if (name == "nw") return ResizeEdge::NorthWest;
+    if (name == "n") return ResizeEdge::North;
+    if (name == "ne") return ResizeEdge::NorthEast;
+    if (name == "w") return ResizeEdge::West;
+    if (name == "e") return ResizeEdge::East;
+    if (name == "sw") return ResizeEdge::SouthWest;
+    if (name == "s") return ResizeEdge::South;
+    if (name == "se") return ResizeEdge::SouthEast;
+    return std::nullopt;
+}
 
 }  // namespace
 
@@ -69,6 +92,12 @@ int main() {
                     runOnUiThread([&window] { window.present(); window.report(); });
                 } else if (line == "report") {
                     runOnUiThread([&window] { window.report(); });
+                } else if (line == "move") {
+                    runOnUiThread([&window] { window.beginMove(); });
+                } else if (line.rfind("resize ", 0) == 0) {
+                    if (const auto edge = edgeNamed(line.substr(7))) {
+                        runOnUiThread([&window, edge] { window.beginResize(*edge); });
+                    }
                 } else if (line == "quit") {
                     runOnUiThread([] { stopEventLoop(); });
                     break;
