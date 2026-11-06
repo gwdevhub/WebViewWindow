@@ -23,12 +23,11 @@ namespace {
 
 class ExampleWindow : public WebViewWindow {
 public:
-    explicit ExampleWindow(std::chrono::milliseconds cooldown) : WebViewWindow(options(cooldown)) {
-        handler().on("ready", [](WebViewWindow&, const Json&, const Reply& reply) {
-            std::printf("loaded\n");
-            std::fflush(stdout);
-            reply.result(nullptr);
-        });
+    explicit ExampleWindow(std::chrono::milliseconds cooldown) : WebViewWindow(options(cooldown)) {}
+
+    void onPageReady() override {
+        std::printf("loaded\n");
+        std::fflush(stdout);
     }
 
     std::string html() const override {

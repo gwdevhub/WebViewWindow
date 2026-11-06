@@ -51,6 +51,10 @@ struct WindowOptions {
     // The window's background is see-through, where the platform can show the desktop through it. Nothing is drawn behind the
     // page, so the page fills whatever it wants drawn.
     bool transparent = true;
+    // The folder WebView2 keeps its profile and caches in. Empty means a folder beside the executable.
+    std::filesystem::path webViewDataFolder;
+    // How long a page may take to report that it's ready before the window fails. Zero means no limit.
+    std::chrono::seconds startupTimeout = std::chrono::seconds(30);
 };
 
 // The platform's window and web view. Each platform defines it in its own source file.
@@ -70,6 +74,8 @@ public:
 
     // Creates the native window and loads the page. Call once, before runEventLoop.
     void open();
+    // Recreates the web view and loads the page again, then shows the window. The way back from a failed web view.
+    void reload();
 
     // Shows the window, opening it first if it was never opened or its web view was freed.
     void show();
@@ -111,6 +117,8 @@ public:
     void toggleMaximize();
     // Asks the window to close, as the window manager's close would: allowClose decides.
     void close();
+    // Keeps the web view of a hidden window past its cooldown, until the window is shown or presented again.
+    void keepWebView();
 
     // Sends an event to the page: window.hostReceive({event, data}).
     void emit(const std::string& event, const Json& data);
@@ -130,6 +138,8 @@ public:
 
     // Called by the platform when the page posts a message, when the user asks to close the window, and after it closes.
     void receive(const std::string& text);
+    // Called by the platform, on the window's thread, when the web view can't carry on. onWebViewFailure decides what happens.
+    void notifyWebViewFailed(const std::string& message);
     bool requestClose();
     void notifyClosed();
     void notifyFocusLost();
@@ -143,6 +153,11 @@ protected:
     virtual void onFocusLost() {}
     // Called when the window is moved or resized by the user, or by a call above.
     virtual void onFrameChanged() {}
+    // Called when the page reports that it's ready. The window has been shown by then.
+    virtual void onPageReady() {}
+    // Called when the web view fails: its page didn't report ready in time, its process failed, or the page reported an error.
+    // The default shows the error and closes the window.
+    virtual void onWebViewFailure(const std::string& message);
 
 private:
     // Each platform implements these in platform/<os>/WebViewWindow.cpp.
@@ -165,6 +180,8 @@ private:
     void platformToggleMaximize();
     void platformClose();
     void platformRunScript(const std::string& script);
+    // The page reported that it's ready: the window is shown, and host events can reach the page.
+    void platformPageReady();
     void platformOpenDevTools();
     // Converts a size on the screen to the device-independent pixels resize takes, before the UI scale is removed.
     int platformToIndependent(int pixels) const;
@@ -180,6 +197,11 @@ private:
     int baseHeight_ = 0;
     bool visible_ = false;
     bool opened_ = false;
+    // Counts the page loads, so a reply from an earlier page is dropped once the window has loaded another.
+    std::uint64_t pageGeneration_ = 0;
+    // Whether the current page has reported ready. Host events wait for it, in pendingEvents_.
+    bool pageReady_ = false;
+    std::vector<std::string> pendingEvents_;
     // Counts the hides and shows, so a cooldown started by an earlier hide does nothing once the window is shown again.
     std::uint64_t cooldownGeneration_ = 0;
     // Expires with the window, so a cooldown still waiting when the window is destroyed does nothing.
@@ -234,6 +256,10 @@ void setApplicationIcon(const std::string& png);
 
 // Shows an error in a dialog, and writes it to stderr. Used where nothing else would show the failure.
 void showError(const std::string& message);
+// Shows an error in a dialog and then stops the event loop. Can be called from any thread.
+void reportFatalError(const std::string& message);
+// Called with true before the library shows a modal dialog, and with false after it, so a watchdog can wait for the user.
+void setDialogObserver(std::function<void(bool shown)> observer);
 
 // Runs a task on the event loop's thread, from any thread.
 void runOnUiThread(std::function<void()> task);

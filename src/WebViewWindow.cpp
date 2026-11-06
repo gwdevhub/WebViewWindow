@@ -25,7 +25,29 @@ std::set<WebViewWindow*>& liveWindows() {
     return windows;
 }
 
+std::function<void(bool)>& dialogObserver() {
+    static std::function<void(bool)> observer;
+    return observer;
+}
+
+void announceDialog(bool shown) {
+    if (dialogObserver()) {
+        dialogObserver()(shown);
+    }
+}
+
 }  // namespace
+
+void setDialogObserver(std::function<void(bool shown)> observer) {
+    dialogObserver() = std::move(observer);
+}
+
+void reportFatalError(const std::string& message) {
+    runOnUiThread([message] {
+        showError(message);
+        stopEventLoop();
+    });
+}
 
 WebViewWindow::WebViewWindow(WindowOptions options)
     : options_(std::move(options)), baseWidth_(options_.width), baseHeight_(options_.height) {
@@ -38,13 +60,20 @@ WebViewWindow::~WebViewWindow() {
 
 void requireWindowingRuntime() {
     if (const auto problem = missingWindowingRuntime()) {
+        announceDialog(true);
         if (problem->link.empty()) {
             showError(problem->message);
         } else {
             offerLink(problem->message, problem->link);
         }
+        announceDialog(false);
         throw RuntimeMissingError(problem->message);
     }
+}
+
+void WebViewWindow::onWebViewFailure(const std::string& message) {
+    showError(message);
+    close();
 }
 
 void WebViewWindow::open() {
@@ -55,6 +84,9 @@ void WebViewWindow::open() {
     }
     requireWindowingRuntime();
     visible_ = options_.visible;
+    ++pageGeneration_;
+    pageReady_ = false;
+    pendingEvents_.clear();
     platformOpen();
     opened_ = true;
     keepOnScreen();
@@ -104,8 +136,23 @@ void WebViewWindow::startCooldown() {
 }
 
 void WebViewWindow::freeWebView() {
+    ++pageGeneration_;
+    pageReady_ = false;
+    pendingEvents_.clear();
     opened_ = false;
     platformUnload();
+}
+
+void WebViewWindow::reload() {
+    ++cooldownGeneration_;
+    freeWebView();
+    options_.visible = true;
+    open();
+    present();
+}
+
+void WebViewWindow::keepWebView() {
+    ++cooldownGeneration_;
 }
 
 void WebViewWindow::resize(int width, int height) {
@@ -233,7 +280,13 @@ void WebViewWindow::setTitle(const std::string& title) {
 }
 
 void WebViewWindow::emit(const std::string& event, const Json& data) {
-    runScript("window.hostReceive(" + Json{{"event", event}, {"data", data}}.dump() + ")");
+    const std::string script = "window.hostReceive(" + Json{{"event", event}, {"data", data}}.dump() + ")";
+    // The page subscribes to events as it starts, so events wait until it reports ready.
+    if (pageReady_) {
+        platformRunScript(script);
+    } else {
+        pendingEvents_.push_back(script);
+    }
 }
 
 void WebViewWindow::openDevTools() {
@@ -253,11 +306,38 @@ void WebViewWindow::receive(const std::string& text) {
         return;
     }
     const std::uint64_t id = request.id;
+    const auto generation = pageGeneration_;
+    const auto alive = std::weak_ptr<bool>(alive_);
     Reply reply{
-        [this, id](const Json& result) { runScript(replyScript(id, result)); },
-        [this, id](const std::string& message) { runScript(errorScript(id, message)); },
+        [this, id, alive, generation](const Json& result) {
+            if (!alive.expired() && generation == pageGeneration_) runScript(replyScript(id, result));
+        },
+        [this, id, alive, generation](const std::string& message) {
+            if (!alive.expired() && generation == pageGeneration_) runScript(errorScript(id, message));
+        },
     };
+    if (request.method == "ready") {
+        reply.result(nullptr);
+        pageReady_ = true;
+        platformPageReady();
+        const auto events = std::move(pendingEvents_);
+        pendingEvents_.clear();
+        for (const std::string& script : events) {
+            platformRunScript(script);
+        }
+        onPageReady();
+        return;
+    }
+    if (request.method == "frontendError") {
+        reply.result(nullptr);
+        notifyWebViewFailed(request.args.empty() ? "The page reported an error." : request.args.at(0).get<std::string>());
+        return;
+    }
     handler_.dispatch(*this, request, reply);
+}
+
+void WebViewWindow::notifyWebViewFailed(const std::string& message) {
+    onWebViewFailure(message);
 }
 
 bool WebViewWindow::requestClose() {

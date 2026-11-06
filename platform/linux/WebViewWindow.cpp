@@ -721,6 +721,9 @@ void WebViewWindow::platformOpenDevTools() {
     }
 }
 
+// WebKitGTK shows the window when its page has loaded, so a ready page has nothing more to do here.
+void WebViewWindow::platformPageReady() {}
+
 void WebViewWindow::platformRunScript(const std::string& script) {
     if (native_ && native_->view) {
         api().web_view_run_javascript(native_->view, script.c_str(), nullptr, nullptr, nullptr);
