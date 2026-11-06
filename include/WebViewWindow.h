@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <stdexcept>
@@ -63,12 +64,16 @@ public:
     // Creates the native window and loads the page. Call once, before runEventLoop.
     void open();
 
+    // Shows the window, opening it first if it was never opened or its web view was freed.
     void show();
+    // Hides the window. Its web view is freed after a cooldown, unless the window is shown again first.
     void hide();
     // Brings the window to the front and gives it the focus. A hidden or minimised window is shown and restored first.
     void present();
     // The window's rectangle on the screen, when the platform can give it.
     std::optional<Rect> frame() const;
+    // Whether the pointer is over the window, when the platform can tell.
+    bool containsPointer() const;
     // The window's size in the units resize takes, read back from the screen. Missing when the window isn't open.
     std::optional<std::pair<int, int>> frameUnscaled() const;
 
@@ -139,6 +144,8 @@ private:
     void platformSetTitle(const std::string& title);
     // Applies options_.skipTaskbar, which is already updated when it runs.
     void platformSetSkipTaskbar();
+    // Destroys the native window and its web view. The window can be opened again after this.
+    void platformUnload();
     void platformBeginMove();
     void platformBeginResize(ResizeEdge edge);
     void platformMinimize();
@@ -150,6 +157,9 @@ private:
     int platformToIndependent(int pixels) const;
     // Moves the window back inside its monitor's work area when it has gone past an edge.
     void keepOnScreen();
+    // Starts the cooldown after which a hidden window frees its web view. A show or present cancels it.
+    void startCooldown();
+    void freeWebView();
 
     WindowOptions options_;
     // The window's size without the UI scale, which is what the page and the settings work in.
@@ -157,6 +167,10 @@ private:
     int baseHeight_ = 0;
     bool visible_ = false;
     bool opened_ = false;
+    // Counts the hides and shows, so a cooldown started by an earlier hide does nothing once the window is shown again.
+    std::uint64_t cooldownGeneration_ = 0;
+    // Expires with the window, so a cooldown still waiting when the window is destroyed does nothing.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     MessageHandler handler_;
     std::unique_ptr<NativeWindow, NativeWindowDeleter> native_;
 };
@@ -197,6 +211,10 @@ void stopEventLoop();
 // The application's name, which the windows' own dialogs use as their title. Set it before a window opens. The default is "Application".
 void setApplicationName(const std::string& name);
 const std::string& applicationName();
+
+// Sets the icon every window shows, from the PNG bytes the host embeds. Windows takes its icon from the executable's resource
+// instead, so there it does nothing.
+void setApplicationIcon(const std::string& png);
 
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but
 // they aren't part of the window.

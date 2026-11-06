@@ -6,10 +6,19 @@ transparent layer over the desktop.
 
 The library is meant to be used as a submodule. The host application:
 
-- calls `setApplicationName` and `initializeWindowing` at startup,
+- calls `setApplicationName` and `initializeWindowing` at startup, and `setApplicationIcon` if it has a PNG icon to show,
 - subclasses `WebViewWindow`, overriding `html()` (or `devUrl()`) and `title()`,
 - defines the desktop functions declared in `include/WebViewWindow.h` for each platform it runs on: `showError`,
   `cursorPosition`, `workArea` and `workAreaAt`. `example/Host.cpp` has the Windows versions.
+
+## Lifecycle
+
+- A window is hidden until its page has loaded, so it never shows as an empty frame. A `show` or `present` that comes before
+  then takes effect once the page is loaded.
+- `hide` frees the window's web view after two minutes, unless the window is shown again first. The next `show` or `present`
+  opens the window again.
+- When the user closes a window, `allowClose` decides. If it returns true, the window is destroyed. A window that should stay
+  reusable returns false and hides itself, as it would through `hide`.
 
 ## Layout
 

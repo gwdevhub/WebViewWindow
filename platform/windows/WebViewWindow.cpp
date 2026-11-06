@@ -76,6 +76,11 @@ struct NativeWindow {
     ICoreWebView2* webview = nullptr;
     EventRegistrationToken messageToken{};
     EventRegistrationToken processFailedToken{};
+    EventRegistrationToken navigationToken{};
+    // The window stays hidden until its page has loaded, so it never shows as an empty frame.
+    bool pageLoaded = false;
+    bool wantsVisible = false;
+    bool wantsFocus = false;
     // Scripts asked for before the web view exists. They run once it's ready.
     std::vector<std::wstring> pendingScripts;
     // Set while the window is being destroyed by its owner, so no close notification is sent for it.
@@ -115,6 +120,24 @@ void resizeWebView(NativeWindow* native) {
 void syncWebViewVisibility(NativeWindow* native) {
     if (native->controller && native->hwnd) {
         native->controller->put_IsVisible(IsWindowVisible(native->hwnd) && !IsIconic(native->hwnd));
+    }
+}
+
+// Shows the window once its page has loaded, if it's wanted yet. Focus goes to it only if it was asked for. Later loads, such as
+// a page reloaded after its process died, leave the window as the user has it.
+void showLoadedPage(NativeWindow* native) {
+    if (native->pageLoaded) {
+        return;
+    }
+    native->pageLoaded = true;
+    if (!native->hwnd || !native->wantsVisible) {
+        return;
+    }
+    ShowWindow(native->hwnd, SW_SHOW);
+    syncWebViewVisibility(native);
+    if (native->wantsFocus) {
+        native->wantsFocus = false;
+        SetForegroundWindow(native->hwnd);
     }
 }
 
@@ -195,6 +218,7 @@ void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
             recoverFromProcessFailure(native, kind);
         }),
         &native->processFailedToken);
+    native->webview->add_NavigationCompleted(webview2::navigationDone([native] { showLoadedPage(native); }), &native->navigationToken);
     sendPendingScripts(native);
 }
 
@@ -524,6 +548,9 @@ void registerWindowClass() {
         windowClass.lpfnWndProc = windowProc;
         windowClass.hInstance = GetModuleHandleW(nullptr);
         windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW, as a wide-string resource id
+        // The executable's icon, which the build puts in as resource 1. Without one, the window keeps the default icon.
+        windowClass.hIcon = LoadIconW(windowClass.hInstance, MAKEINTRESOURCEW(1));
+        windowClass.hIconSm = windowClass.hIcon;
         // Shows until the page has drawn, so the window doesn't flash white on start.
         windowClass.hbrBackground = CreateSolidBrush(RGB(24, 24, 24));
         windowClass.lpszClassName = kWindowClass;
@@ -754,11 +781,27 @@ void WebViewWindow::platformOpen() {
     if (options.keepBelow) {
         SetWindowPos(native->hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
-    ShowWindow(native->hwnd, options.visible ? SW_SHOW : SW_HIDE);
+    // Shown once the page has loaded. The window is created without WS_VISIBLE, so it stays hidden until then.
+    native->wantsVisible = options.visible;
+}
+
+void WebViewWindow::platformUnload() {
+    native_.reset();
+}
+
+bool WebViewWindow::containsPointer() const {
+    const auto pointer = cursorPosition();
+    const auto bounds = frame();
+    return pointer && bounds && bounds->contains(pointer->first, pointer->second);
 }
 
 void WebViewWindow::platformPresent() {
     if (native_ && native_->hwnd) {
+        native_->wantsVisible = true;
+        if (!native_->pageLoaded) {
+            native_->wantsFocus = true;
+            return;
+        }
         // Restores the window if it's minimised, then asks for the foreground. Windows may keep the focus where it is.
         ShowWindow(native_->hwnd, IsIconic(native_->hwnd) ? SW_RESTORE : SW_SHOW);
         syncWebViewVisibility(native_.get());
@@ -768,8 +811,11 @@ void WebViewWindow::platformPresent() {
 
 void WebViewWindow::platformShow(bool visible) {
     if (native_ && native_->hwnd) {
-        ShowWindow(native_->hwnd, visible ? SW_SHOW : SW_HIDE);
-        syncWebViewVisibility(native_.get());
+        native_->wantsVisible = visible;
+        if (native_->pageLoaded) {
+            ShowWindow(native_->hwnd, visible ? SW_SHOW : SW_HIDE);
+            syncWebViewVisibility(native_.get());
+        }
     }
 }
 
@@ -822,6 +868,9 @@ void offerLink(const std::string& message, const std::string& link) {
         ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 }
+
+// Windows takes each window's icon from the executable's resource, so there's nothing to set here.
+void setApplicationIcon(const std::string&) {}
 
 void initializeWindowing() {
     requireWindowingRuntime();
