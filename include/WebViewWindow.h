@@ -155,6 +155,7 @@ protected:
     virtual void onFrameChanged() {}
     // Called when the page reports that it's ready. The window has been shown by then.
     virtual void onPageReady() {}
+    bool pageReady() const { return pageReady_; }
     // Called when the web view fails: its page didn't report ready in time, its process failed, or the page reported an error.
     // The default shows the error and closes the window.
     virtual void onWebViewFailure(const std::string& message);
