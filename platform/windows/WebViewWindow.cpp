@@ -184,7 +184,10 @@ void recoverFromProcessFailure(NativeWindow* native, COREWEBVIEW2_PROCESS_FAILED
             } else {
                 native->webview->NavigateToString(toWide(native->owner->html()).c_str());
             }
-            runOnUiThread([] { showError("The page of a fence stopped unexpectedly, so it has been loaded again."); });
+            {
+                const std::string message = native->owner->pageReloadedMessage();
+                runOnUiThread([message] { showError(message); });
+            }
             return;
         }
         default:

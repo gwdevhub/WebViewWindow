@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -39,6 +40,8 @@ struct WindowOptions {
     // opens, is resized, or is dropped after a move or resize, so it never goes past the monitor's edges. When it isn't confined,
     // the window may go past them, and part of it can be off the screen.
     bool confinedToWorkArea = true;
+    // How long a hidden window keeps its web view before the web view is freed. A show or present before then keeps it.
+    std::chrono::milliseconds cooldown = std::chrono::minutes(2);
     // Kept under other windows, so the window reads as part of the desktop.
     bool keepBelow = false;
     // Shown on every virtual desktop. Windows has none, so there it does nothing.
@@ -122,6 +125,8 @@ public:
     virtual std::string html() const { return {}; }
     virtual std::string devUrl() const { return {}; }
     virtual std::string title() const { return options_.title; }
+    // The message shown when the page's process died and the page was loaded again.
+    virtual std::string pageReloadedMessage() const { return "The page stopped unexpectedly, so it has been loaded again."; }
 
     // Called by the platform when the page posts a message, when the user asks to close the window, and after it closes.
     void receive(const std::string& text);

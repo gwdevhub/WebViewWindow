@@ -12,9 +12,6 @@ namespace {
 
 int uiScale = 100;
 
-// How long a hidden window keeps its web view, so showing it again soon is instant.
-const auto kCooldown = std::chrono::minutes(2);
-
 // The rectangle moved the least it takes to lie inside area. One larger than the area sits at the area's top left.
 Rect keptWithin(Rect rect, const Rect& area) {
     rect.x = std::max(area.x, std::min(rect.x, area.right() - rect.width));
@@ -94,9 +91,10 @@ void WebViewWindow::hide() {
 
 void WebViewWindow::startCooldown() {
     const std::uint64_t generation = ++cooldownGeneration_;
+    const auto cooldown = options_.cooldown;
     // The thread only waits. Its task runs on the window's thread, and only if the window still exists and nothing has changed.
-    std::thread([this, alive = std::weak_ptr<bool>(alive_), generation] {
-        std::this_thread::sleep_for(kCooldown);
+    std::thread([this, alive = std::weak_ptr<bool>(alive_), generation, cooldown] {
+        std::this_thread::sleep_for(cooldown);
         runOnUiThread([this, alive, generation] {
             if (!alive.expired() && generation == cooldownGeneration_ && !visible_) {
                 freeWebView();

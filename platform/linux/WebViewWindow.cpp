@@ -257,7 +257,7 @@ gboolean onFocusOut(GtkWidget*, GdkEvent*, gpointer data) {
 }
 
 // WebKit runs the page in a process of its own, which can die. The page is loaded again from the window's own page, since
-// it asks the host for its state as it loads, and the user is told why the fence blanked for a moment.
+// it asks the host for its state as it loads, and the user is told why the page blanked for a moment.
 gboolean onWebProcessCrashed(WebKitWebView* view, gpointer data) {
     auto* window = static_cast<WebViewWindow*>(data);
     const std::string url = window->devUrl();
@@ -266,8 +266,9 @@ gboolean onWebProcessCrashed(WebKitWebView* view, gpointer data) {
     } else {
         api().web_view_load_html(view, window->html().c_str(), nullptr);
     }
-    runOnUiThread([] {
-        showError("The page of a fence stopped unexpectedly, so it has been loaded again.");
+    const std::string message = window->pageReloadedMessage();
+    runOnUiThread([message] {
+        showError(message);
     });
     return TRUE;
 }

@@ -27,6 +27,7 @@ fail() { echo "FAIL: $1"; failures=$((failures + 1)); }
 # Builds the example unless a build directory is given, then starts it with its commands on fd 3. Usage: start_example [build-dir]
 start_example() {
     local build="${1:-}"
+    shift || true
     if [[ -z "$build" ]]; then
         build="$work/build"
         if ! cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEBVIEW_WINDOW_BUILD_EXAMPLE=ON > "$work/configure.log" 2>&1; then
@@ -51,7 +52,7 @@ start_example() {
     mkdir -p "$work/home"
     touch "$work/out.txt"
     # The example's home is a scratch folder, so no settings are touched.
-    HOME="$work/home" "$bin" < "$work/commands" > "$work/out.txt" 2> "$work/err.txt" &
+    HOME="$work/home" "$bin" "$@" < "$work/commands" > "$work/out.txt" 2> "$work/err.txt" &
     pid=$!
     exec 3> "$work/commands"
 }

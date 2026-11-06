@@ -9,6 +9,7 @@
 // window's rectangle on the screen in pixels, or "frame=none" when it has no native window. The area is the work area of the
 // monitor the window is on, or "area=none".
 
+#include <chrono>
 #include <cstdio>
 #include <exception>
 #include <iostream>
@@ -22,7 +23,7 @@ namespace {
 
 class ExampleWindow : public WebViewWindow {
 public:
-    ExampleWindow() : WebViewWindow(options()) {
+    explicit ExampleWindow(std::chrono::milliseconds cooldown) : WebViewWindow(options(cooldown)) {
         handler().on("ready", [](WebViewWindow&, const Json&, const Reply& reply) {
             std::printf("loaded\n");
             std::fflush(stdout);
@@ -58,8 +59,9 @@ public:
     }
 
 private:
-    static WindowOptions options() {
+    static WindowOptions options(std::chrono::milliseconds cooldown) {
         WindowOptions options;
+        options.cooldown = cooldown;
         options.title = "WebViewWindow Example";
         options.width = 320;
         options.height = 160;
@@ -82,11 +84,16 @@ std::optional<ResizeEdge> edgeNamed(const std::string& name) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // --cooldown-ms N sets how long a hidden window keeps its web view. The default is the library's.
+    std::chrono::milliseconds cooldown = std::chrono::minutes(2);
+    if (argc == 3 && std::string(argv[1]) == "--cooldown-ms") {
+        cooldown = std::chrono::milliseconds(std::stol(argv[2]));
+    }
     try {
         setApplicationName("WebViewWindow Example");
         initializeWindowing();
-        ExampleWindow window;
+        ExampleWindow window(cooldown);
         window.open();
 
         std::thread reader([&window] {
