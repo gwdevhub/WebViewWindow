@@ -59,6 +59,9 @@ else
     fail "the bottom edge is at $((fy + fh)), expected the grid line $want_bottom (unsnapped $unsnapped_bottom)"
 fi
 
+# Let the south-east drag finish before the next one starts.
+sleep 0.05
+
 # 2. North-west resize from the window as it is now. The left and top edges move by dx and dy, chosen the same way: the unsnapped
 #    left edge is 3 pixels past a grid line and the unsnapped top edge 2 pixels past one.
 IFS=, read -r x y w h <<< "$frame"

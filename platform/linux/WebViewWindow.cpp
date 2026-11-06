@@ -18,10 +18,16 @@ struct NativeWindow {
     GtkWidget* window = nullptr;
     WebKitWebView* view = nullptr;
     WebKitUserContentManager* manager = nullptr;
-    // Set while the user drags or resizes the window, so its edges snap to the grid when the drag ends. The frame it began with is
-    // what the snapping compares against.
+    // Set while the user drags or resizes the window: the window follows the pointer, and the frame it began with is kept here.
     bool snapping = false;
     Rect dragStart;
+    // The pointer where the drag began, and whether it resizes from edge.
+    int pressX = 0;
+    int pressY = 0;
+    bool resizing = false;
+    ResizeEdge edge = ResizeEdge::NorthWest;
+    // Whether the library moves the window as it is dragged, rather than the window manager.
+    bool manual = false;
     // The window stays hidden until its page has loaded, so it never shows as an empty frame.
     bool pageLoaded = false;
     bool wantsVisible = false;
@@ -399,8 +405,7 @@ void WebViewWindow::platformPresent() {
 
 namespace {
 
-// Windows snaps the edges of a move or resize to this grid, in screen pixels. The window manager does the dragging on Linux, so the
-// grid is applied once the button is let go, to the edges the drag moved.
+// Moves and resizes snap the edges they move to this grid, in screen pixels.
 constexpr int kSnapGrid = 8;
 constexpr guint kDragPollMilliseconds = 20;
 constexpr guint kButton1Mask = 1u << 8;
@@ -411,9 +416,10 @@ int snapToGrid(int logical, int scale) {
     return static_cast<int>(std::lround(static_cast<double>(screen) / scale));
 }
 
-bool buttonHeld() {
+// The pointer's position on the screen, and whether the left button is held.
+bool pointerState(int& x, int& y) {
     guint mask = 0;
-    api().display_get_pointer(api().display_get_default(), nullptr, nullptr, nullptr, &mask);
+    api().display_get_pointer(api().display_get_default(), nullptr, &x, &y, &mask);
     return (mask & kButton1Mask) != 0;
 }
 
@@ -429,34 +435,67 @@ Rect frameOf(GtkWidget* widget) {
     return Rect{x, y, width, height};
 }
 
-// Moves the window to the grid. A move keeps its size, so both corners snap. A resize snaps only the edges it moved, as Windows does.
-void snapDroppedFrame(NativeWindow* native) {
-    const Rect start = native->dragStart;
-    const Rect frame = frameOf(native->window);
-    const int scale = api().widget_get_scale_factor(native->window);
-    Rect target = frame;
-    if (frame.width == start.width && frame.height == start.height) {
-        target.x = snapToGrid(frame.x, scale);
-        target.y = snapToGrid(frame.y, scale);
-    } else {
-        int left = frame.x;
-        int top = frame.y;
-        int right = frame.right();
-        int bottom = frame.y + frame.height;
-        if (left != start.x) {
-            left = snapToGrid(left, scale);
-        }
-        if (right != start.right()) {
-            right = snapToGrid(right, scale);
-        }
-        if (top != start.y) {
-            top = snapToGrid(top, scale);
-        }
-        if (bottom != start.y + start.height) {
-            bottom = snapToGrid(bottom, scale);
-        }
-        target = Rect{left, top, right - left, bottom - top};
+// The frame a drag asks for when the pointer has moved by (dx, dy) since it began: snapped to the grid, and inside the work area
+// when the window is confined to it. A move keeps the size; a resize moves only the edges its edge names.
+Rect dragTarget(const NativeWindow& native, int dx, int dy) {
+    const Rect start = native.dragStart;
+    const int scale = api().widget_get_scale_factor(native.window);
+    std::optional<Rect> area;
+    if (native.confined) {
+        area = workAreaAt(start);
     }
+    if (!native.resizing) {
+        int x = snapToGrid(start.x + dx, scale);
+        int y = snapToGrid(start.y + dy, scale);
+        if (area) {
+            x = std::max(area->x, std::min(x, area->right() - start.width));
+            y = std::max(area->y, std::min(y, area->bottom() - start.height));
+        }
+        return Rect{x, y, start.width, start.height};
+    }
+    const ResizeEdge edge = native.edge;
+    const bool west = edge == ResizeEdge::West || edge == ResizeEdge::NorthWest || edge == ResizeEdge::SouthWest;
+    const bool east = edge == ResizeEdge::East || edge == ResizeEdge::NorthEast || edge == ResizeEdge::SouthEast;
+    const bool north = edge == ResizeEdge::North || edge == ResizeEdge::NorthWest || edge == ResizeEdge::NorthEast;
+    const bool south = edge == ResizeEdge::South || edge == ResizeEdge::SouthWest || edge == ResizeEdge::SouthEast;
+    int left = start.x;
+    int top = start.y;
+    int right = start.right();
+    int bottom = start.bottom();
+    if (west) {
+        left = snapToGrid(start.x + dx, scale);
+        if (area) {
+            left = std::max(left, area->x);
+        }
+        left = std::min(left, right - 1);
+    }
+    if (east) {
+        right = snapToGrid(start.right() + dx, scale);
+        if (area) {
+            right = std::min(right, area->right());
+        }
+        right = std::max(right, left + 1);
+    }
+    if (north) {
+        top = snapToGrid(start.y + dy, scale);
+        if (area) {
+            top = std::max(top, area->y);
+        }
+        top = std::min(top, bottom - 1);
+    }
+    if (south) {
+        bottom = snapToGrid(start.bottom() + dy, scale);
+        if (area) {
+            bottom = std::min(bottom, area->bottom());
+        }
+        bottom = std::max(bottom, top + 1);
+    }
+    return Rect{left, top, right - left, bottom - top};
+}
+
+// Moves and resizes the window to the target, changing only what differs.
+void applyTarget(NativeWindow* native, const Rect& target) {
+    const Rect frame = frameOf(native->window);
     auto* window = reinterpret_cast<GtkWindow*>(native->window);
     if (target.x != frame.x || target.y != frame.y) {
         api().window_move(window, target.x, target.y);
@@ -466,65 +505,110 @@ void snapDroppedFrame(NativeWindow* native) {
     }
 }
 
-// A confined window that is dropped is moved back inside its monitor's work area. One larger than the area keeps its top-left corner.
-void confineDroppedFrame(NativeWindow* native) {
+// Settles a drag the window manager ran, once the button is let go: the grid, then the work area when confined.
+void settleDroppedFrame(NativeWindow* native) {
+    const Rect start = native->dragStart;
     const Rect frame = frameOf(native->window);
-    const auto area = workAreaAt(frame);
-    if (!area) {
-        return;
+    const int scale = api().widget_get_scale_factor(native->window);
+    Rect target = frame;
+    if (!native->resizing) {
+        target.x = snapToGrid(frame.x, scale);
+        target.y = snapToGrid(frame.y, scale);
+    } else {
+        int left = frame.x;
+        int top = frame.y;
+        int right = frame.right();
+        int bottom = frame.bottom();
+        if (left != start.x) {
+            left = snapToGrid(left, scale);
+        }
+        if (right != start.right()) {
+            right = snapToGrid(right, scale);
+        }
+        if (top != start.y) {
+            top = snapToGrid(top, scale);
+        }
+        if (bottom != start.bottom()) {
+            bottom = snapToGrid(bottom, scale);
+        }
+        target = Rect{left, top, right - left, bottom - top};
     }
-    const int x = std::max(area->x, std::min(frame.x, area->right() - frame.width));
-    const int y = std::max(area->y, std::min(frame.y, area->bottom() - frame.height));
-    if (x != frame.x || y != frame.y) {
-        api().window_move(reinterpret_cast<GtkWindow*>(native->window), x, y);
+    if (native->confined) {
+        if (const auto area = workAreaAt(target)) {
+            target.x = std::max(area->x, std::min(target.x, area->right() - target.width));
+            target.y = std::max(area->y, std::min(target.y, area->bottom() - target.height));
+        }
     }
+    applyTarget(native, target);
 }
 
-// Checks each time the drag's poll fires, until the button is let go; then the dropped frame is snapped, and kept in the work area
-// when the window is confined to it. While the button is held the window manager moves the window freely.
+// Runs each time the drag's poll fires: a drag the window follows itself moves with the pointer, and the rest are settled once
+// the button is let go.
 gboolean onDragPoll(gpointer data) {
     auto* native = static_cast<NativeWindow*>(data);
-    if (buttonHeld()) {
+    int x = 0;
+    int y = 0;
+    if (pointerState(x, y)) {
+        if (native->manual && native->window) {
+            applyTarget(native, dragTarget(*native, x - native->pressX, y - native->pressY));
+        }
         return TRUE;
     }
-    if (native->window) {
-        snapDroppedFrame(native);
-        if (native->confined) {
-            confineDroppedFrame(native);
-        }
+    if (native->window && !native->manual) {
+        settleDroppedFrame(native);
     }
     native->snapping = false;
     return FALSE;
 }
 
-// Records the frame before the window manager starts the drag, and polls for the button's release.
-void beginSnapping(NativeWindow* native) {
-    if (!native->window || native->snapping) {
+// Records where a drag began, and starts its poll. A new press restarts the drag, even while the last one's poll still runs.
+void beginDrag(NativeWindow* native, bool resizing, ResizeEdge edge, bool manual) {
+    int x = 0;
+    int y = 0;
+    if (!native->window || !pointerState(x, y)) {
         return;
     }
-    native->snapping = true;
+    native->resizing = resizing;
+    native->edge = edge;
+    native->manual = manual;
+    native->pressX = x;
+    native->pressY = y;
     native->dragStart = frameOf(native->window);
-    api().timeout_add(kDragPollMilliseconds, onDragPoll, native);
+    if (!native->snapping) {
+        native->snapping = true;
+        api().timeout_add(kDragPollMilliseconds, onDragPoll, native);
+    }
 }
 
 }  // namespace
 
-// The drags below follow the left button the page saw pressed, from where the pointer is now.
+// A confined window on X11 is moved by the library, so it stays inside the work area as it's dragged. Otherwise the window manager
+// does the drag, which is the only way a window can go past the work area while it's being dragged.
 void WebViewWindow::platformBeginMove() {
-    const auto pointer = cursorPosition();
-    if (native_ && native_->window && pointer) {
-        beginSnapping(native_.get());
-        api().window_begin_move_drag(reinterpret_cast<GtkWindow*>(native_->window), 1, pointer->first, pointer->second,
-                                     serverTime(native_->window));
+    if (!native_ || !native_->window) {
+        return;
+    }
+    const bool manual = api().x11_server_time && native_->confined;
+    beginDrag(native_.get(), false, ResizeEdge::NorthWest, manual);
+    if (!manual) {
+        if (const auto pointer = cursorPosition()) {
+            api().window_begin_move_drag(reinterpret_cast<GtkWindow*>(native_->window), 1, pointer->first, pointer->second,
+                                         serverTime(native_->window));
+        }
     }
 }
 
 void WebViewWindow::platformBeginResize(ResizeEdge edge) {
-    const auto pointer = cursorPosition();
-    if (native_ && native_->window && pointer) {
-        beginSnapping(native_.get());
-        api().window_begin_resize_drag(reinterpret_cast<GtkWindow*>(native_->window), static_cast<GdkWindowEdge>(edge), 1,
-                                       pointer->first, pointer->second, serverTime(native_->window));
+    if (!native_ || !native_->window) {
+        return;
+    }
+    const bool manual = api().x11_server_time && native_->confined;
+    beginDrag(native_.get(), true, edge, manual);
+    if (!manual) {
+        if (const auto pointer = cursorPosition()) {
+            api().window_begin_resize_drag(reinterpret_cast<GtkWindow*>(native_->window), static_cast<GdkWindowEdge>(edge), 1,
+                                           pointer->first, pointer->second, serverTime(native_->window));
+        }
     }
 }
 
