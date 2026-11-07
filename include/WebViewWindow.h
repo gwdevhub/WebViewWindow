@@ -89,7 +89,7 @@ public:
     // Brings the window to the front and gives it the focus. A hidden or minimised window is shown and restored first.
     void present();
     // The window's rectangle on the screen, when the platform can give it.
-    std::optional<Rect> frame() const;
+    std::optional<ScreenRect> frame() const;
     // Whether the pointer is over the window, when the platform can tell.
     bool containsPointer() const;
     // The window's size in the units resize takes, read back from the screen. Missing when the window isn't open.
@@ -177,7 +177,7 @@ private:
     void platformPresent();
     void platformResize(int width, int height);
     void platformMove(int x, int y);
-    std::optional<Rect> platformFrame() const;
+    std::optional<ScreenRect> platformFrame() const;
     void platformSetTitle(const std::string& title);
     // Applies options_.skipTaskbar, which is already updated when it runs.
     void platformSetSkipTaskbar();
@@ -283,11 +283,11 @@ int scaledSize(int size);
 int unscaledSize(int size);
 
 // The part of the screen the panels leave free, when the platform can give it. Both platforms' libraries define it.
-std::optional<Rect> workArea();
+std::optional<ScreenRect> workArea();
 
 // The work area of the monitor the rectangle is on, when the platform can tell which monitor that is. Missing otherwise, and
 // windows are then left where they are. Both platforms' libraries define it.
-std::optional<Rect> workAreaAt(const Rect& rect);
+std::optional<ScreenRect> workAreaAt(const ScreenRect& rect);
 
 // The mouse position on screen, when the platform can give it. Both platforms' libraries define it.
 std::optional<std::pair<int, int>> cursorPosition();

@@ -28,9 +28,9 @@ CGFloat primaryScreenHeight() {
     return primary ? primary.frame.size.height : 0;
 }
 
-Rect toTopLeft(NSRect rect) {
+ScreenRect toTopLeft(NSRect rect) {
     const CGFloat top = primaryScreenHeight() - (rect.origin.y + rect.size.height);
-    return Rect{static_cast<int>(rect.origin.x), static_cast<int>(top), static_cast<int>(rect.size.width),
+    return ScreenRect{static_cast<int>(rect.origin.x), static_cast<int>(top), static_cast<int>(rect.size.width),
                 static_cast<int>(rect.size.height)};
 }
 
@@ -61,7 +61,7 @@ void WebViewWindow::platformPageReady() {}                  // TODO
 void WebViewWindow::platformRunScript(const std::string&) {} // TODO: WKWebView evaluateJavaScript.
 
 // The window's rectangle on the screen. Nothing until the window exists.
-std::optional<Rect> WebViewWindow::platformFrame() const {
+std::optional<ScreenRect> WebViewWindow::platformFrame() const {
     return std::nullopt;
 }
 
@@ -127,13 +127,13 @@ void runOnUiThread(std::function<void()> task) {
 }
 
 // The work area is the screen minus the menu bar and the Dock, which is what visibleFrame gives.
-std::optional<Rect> workArea() {
+std::optional<ScreenRect> workArea() {
     NSScreen* primary = [NSScreen screens].firstObject;
-    return primary ? std::optional<Rect>(toTopLeft(primary.visibleFrame)) : std::nullopt;
+    return primary ? std::optional<ScreenRect>(toTopLeft(primary.visibleFrame)) : std::nullopt;
 }
 
 // The work area of the screen whose centre is under the rectangle's centre.
-std::optional<Rect> workAreaAt(const Rect& rect) {
+std::optional<ScreenRect> workAreaAt(const ScreenRect& rect) {
     const CGFloat top = primaryScreenHeight() - rect.centreY();
     const NSPoint centre = NSMakePoint(rect.centreX(), top);
     for (NSScreen* screen in [NSScreen screens]) {

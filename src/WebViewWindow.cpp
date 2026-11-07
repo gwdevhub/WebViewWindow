@@ -13,7 +13,7 @@ namespace {
 int uiScale = 100;
 
 // The rectangle moved the least it takes to lie inside area. One larger than the area sits at the area's top left.
-Rect keptWithin(Rect rect, const Rect& area) {
+ScreenRect keptWithin(ScreenRect rect, const ScreenRect& area) {
     rect.x = std::max(area.x, std::min(rect.x, area.right() - rect.width));
     rect.y = std::max(area.y, std::min(rect.y, area.bottom() - rect.height));
     return rect;
@@ -195,7 +195,7 @@ void WebViewWindow::fitToPage(int width, int height) {
     }
 }
 
-std::optional<Rect> WebViewWindow::frame() const {
+std::optional<ScreenRect> WebViewWindow::frame() const {
     return platformFrame();
 }
 
@@ -205,9 +205,9 @@ void WebViewWindow::move(int x, int y) {
         platformMove(x, y);
         return;
     }
-    const Rect target{x, y, current->width, current->height};
+    const ScreenRect target{x, y, current->width, current->height};
     const auto area = workAreaAt(target);
-    const Rect kept = area ? keptWithin(target, *area) : target;
+    const ScreenRect kept = area ? keptWithin(target, *area) : target;
     platformMove(kept.x, kept.y);
 }
 
@@ -229,7 +229,7 @@ void WebViewWindow::keepOnScreen() {
     if (!area) {
         return;
     }
-    const Rect kept = keptWithin(*current, *area);
+    const ScreenRect kept = keptWithin(*current, *area);
     if (kept.x != current->x || kept.y != current->y) {
         platformMove(kept.x, kept.y);
     }

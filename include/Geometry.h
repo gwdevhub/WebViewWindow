@@ -7,7 +7,7 @@
 #include <type_traits>
 
 
-struct Rect {
+struct ScreenRect {
     int x = 0;
     int y = 0;
     int width = 0;
@@ -24,12 +24,12 @@ struct Rect {
     bool contains(int px, int py) const { return px >= x && px < right() && py >= y && py < bottom(); }
 
     // Whether the two rectangles share any area.
-    bool overlaps(const Rect& other) const {
+    bool overlaps(const ScreenRect& other) const {
         return x < other.right() && other.x < right() && y < other.bottom() && other.y < bottom();
     }
 
     // Whether inner lies entirely inside this rectangle.
-    bool contains(const Rect& inner) const {
+    bool contains(const ScreenRect& inner) const {
         return inner.x >= x && inner.y >= y && inner.right() <= right() && inner.bottom() <= bottom();
     }
 
@@ -39,16 +39,16 @@ struct Rect {
     }
 
     // The smallest rectangle holding both this one and other.
-    Rect joined(const Rect& other) const {
+    ScreenRect joined(const ScreenRect& other) const {
         const int left = std::min(x, other.x);
         const int top = std::min(y, other.y);
-        return Rect{left, top, std::max(right(), other.right()) - left, std::max(bottom(), other.bottom()) - top};
+        return ScreenRect{left, top, std::max(right(), other.right()) - left, std::max(bottom(), other.bottom()) - top};
     }
 
     // Two rectangles are equal when their fields are: the struct is four ints with no padding, so its bytes are its fields.
-    bool operator==(const Rect& other) const { return std::memcmp(this, &other, sizeof(Rect)) == 0; }
-    bool operator!=(const Rect& other) const { return !(*this == other); }
+    bool operator==(const ScreenRect& other) const { return std::memcmp(this, &other, sizeof(ScreenRect)) == 0; }
+    bool operator!=(const ScreenRect& other) const { return !(*this == other); }
 };
 
-static_assert(std::is_trivially_copyable_v<Rect> && sizeof(Rect) == 4 * sizeof(int), "Rect must compare by its bytes");
+static_assert(std::is_trivially_copyable_v<ScreenRect> && sizeof(ScreenRect) == 4 * sizeof(int), "ScreenRect must compare by its bytes");
 
