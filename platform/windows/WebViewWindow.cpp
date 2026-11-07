@@ -1100,3 +1100,30 @@ void stopEventLoop() {
     PostQuitMessage(0);
 }
 
+std::optional<std::pair<int, int>> cursorPosition() {
+    POINT point{};
+    if (!GetCursorPos(&point)) {
+        return std::nullopt;
+    }
+    return std::make_pair(static_cast<int>(point.x), static_cast<int>(point.y));
+}
+
+std::optional<Rect> workArea() {
+    RECT area{};
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0)) {
+        return std::nullopt;
+    }
+    return Rect{area.left, area.top, area.right - area.left, area.bottom - area.top};
+}
+
+std::optional<Rect> workAreaAt(const Rect& rect) {
+    const RECT bounds{rect.x, rect.y, rect.right(), rect.bottom()};
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST), &info)) {
+        return std::nullopt;
+    }
+    const RECT& area = info.rcWork;
+    return Rect{area.left, area.top, area.right - area.left, area.bottom - area.top};
+}
+

@@ -270,13 +270,13 @@ void setUiScale(int percent);
 int scaledSize(int size);
 int unscaledSize(int size);
 
-// The part of the screen the panels leave free, when the platform can give it.
+// The part of the screen the panels leave free, when the platform can give it. Both platforms' libraries define it.
 std::optional<Rect> workArea();
 
 // The work area of the monitor the rectangle is on, when the platform can tell which monitor that is. Missing otherwise, and
-// windows are then left where they are.
+// windows are then left where they are. Both platforms' libraries define it.
 std::optional<Rect> workAreaAt(const Rect& rect);
 
-// The mouse position on screen, when the platform can give it.
+// The mouse position on screen, when the platform can give it. Both platforms' libraries define it.
 std::optional<std::pair<int, int>> cursorPosition();
 

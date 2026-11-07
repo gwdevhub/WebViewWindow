@@ -89,8 +89,11 @@ struct GtkApi {
     void (*main_quit)() = nullptr;
     guint (*idle_add)(GSourceFunc, gpointer) = nullptr;
     guint (*timeout_add)(guint, GSourceFunc, gpointer) = nullptr;
-    void* (*display_get_default)() = nullptr;
+    GdkDisplay* (*display_get_default)() = nullptr;
     void (*display_get_pointer)(void*, void*, gint*, gint*, guint*) = nullptr;
+    GdkMonitor* (*display_get_primary_monitor)(GdkDisplay*) = nullptr;
+    GdkMonitor* (*display_get_monitor_at_point)(GdkDisplay*, gint, gint) = nullptr;
+    void (*monitor_get_workarea)(GdkMonitor*, GdkRectangle*) = nullptr;
     gint (*widget_get_scale_factor)(GtkWidget*) = nullptr;
     void (*window_set_icon)(GtkWindow*, GdkPixbuf*) = nullptr;
     GdkDisplay* (*widget_get_display)(GtkWidget*) = nullptr;
@@ -151,6 +154,9 @@ GtkApi loadApi() {
     bind(api.timeout_add, library, "g_timeout_add");
     bind(api.display_get_default, library, "gdk_display_get_default");
     bind(api.display_get_pointer, library, "gdk_display_get_pointer");
+    bind(api.display_get_primary_monitor, library, "gdk_display_get_primary_monitor");
+    bind(api.display_get_monitor_at_point, library, "gdk_display_get_monitor_at_point");
+    bind(api.monitor_get_workarea, library, "gdk_monitor_get_workarea");
     bind(api.widget_get_scale_factor, library, "gtk_widget_get_scale_factor");
     bind(api.window_set_icon, library, "gtk_window_set_icon");
     bind(api.widget_get_display, library, "gtk_widget_get_display");
@@ -822,5 +828,44 @@ gboolean runQueuedTask(gpointer data) {
 
 void runOnUiThread(std::function<void()> task) {
     api().idle_add(runQueuedTask, new std::function<void()>(std::move(task)));
+}
+
+namespace {
+
+// The work area of a monitor, or nothing when there's no monitor.
+std::optional<Rect> areaOf(GdkMonitor* monitor) {
+    if (!monitor) {
+        return std::nullopt;
+    }
+    GdkRectangle area{};
+    api().monitor_get_workarea(monitor, &area);
+    return Rect{area.x, area.y, area.width, area.height};
+}
+
+}  // namespace
+
+std::optional<Rect> workArea() {
+    GdkDisplay* display = api().display_get_default();
+    return display ? areaOf(api().display_get_primary_monitor(display)) : std::nullopt;
+}
+
+std::optional<Rect> workAreaAt(const Rect& rect) {
+    GdkDisplay* display = api().display_get_default();
+    if (!display) {
+        return std::nullopt;
+    }
+    // The monitor under the rectangle's centre.
+    return areaOf(api().display_get_monitor_at_point(display, rect.centreX(), rect.centreY()));
+}
+
+std::optional<std::pair<int, int>> cursorPosition() {
+    GdkDisplay* display = api().display_get_default();
+    if (!display) {
+        return std::nullopt;
+    }
+    gint x = 0;
+    gint y = 0;
+    api().display_get_pointer(display, nullptr, &x, &y, nullptr);
+    return std::make_pair(static_cast<int>(x), static_cast<int>(y));
 }
 
