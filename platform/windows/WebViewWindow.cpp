@@ -22,6 +22,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iterator>
 #include <exception>
 #include <filesystem>
 #include <system_error>
@@ -991,7 +994,51 @@ namespace {
 void initializeTaskWindow();
 }
 
+namespace {
+
+// Writes WebView2Loader.dll beside the executable, from resource 2 of the program, unless the copy there already matches. It's
+// staged and then moved over the old copy, so a copy that's cut short is never loaded. A program that doesn't embed the loader is
+// left to the runtime check, which says what's missing.
+void installWebView2Loader() {
+    const HRSRC resource = FindResourceW(nullptr, MAKEINTRESOURCEW(2), MAKEINTRESOURCEW(10));
+    if (!resource) {
+        return;
+    }
+    const HGLOBAL loaded = LoadResource(nullptr, resource);
+    const auto* bytes = static_cast<const char*>(loaded ? LockResource(loaded) : nullptr);
+    const std::size_t size = SizeofResource(nullptr, resource);
+    if (!bytes || size == 0) {
+        throw std::runtime_error("The WebView2 loader embedded in the program is empty.");
+    }
+    const std::filesystem::path folder = executableFolder();
+    const std::filesystem::path target = folder / "WebView2Loader.dll";
+    std::error_code error;
+    if (std::filesystem::is_regular_file(target, error) && std::filesystem::file_size(target, error) == size) {
+        std::ifstream existing(target, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
+        if (text.size() == size && std::memcmp(text.data(), bytes, size) == 0) {
+            return;
+        }
+    }
+    const std::filesystem::path staged = folder / "WebView2Loader.dll.new";
+    {
+        std::ofstream file(staged, std::ios::binary | std::ios::trunc);
+        file.write(bytes, static_cast<std::streamsize>(size));
+        if (!file) {
+            throw std::runtime_error("The WebView2 loader couldn't be written to " + staged.string());
+        }
+    }
+    std::filesystem::rename(staged, target, error);
+    if (error) {
+        std::filesystem::remove(staged, error);
+        throw std::runtime_error("Can't replace the WebView2 loader while it's in use: " + target.string());
+    }
+}
+
+}  // namespace
+
 void initializeWindowing() {
+    installWebView2Loader();
     initializeTaskWindow();
     requireWindowingRuntime();
 }

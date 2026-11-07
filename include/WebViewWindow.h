@@ -242,6 +242,8 @@ void offerLink(const std::string& message, const std::string& link);
 void requireWindowingRuntime();
 
 // Starts the platform's windowing, so that windows and menus can be made. Throws RuntimeMissingError when a runtime is missing.
+// On Windows it first writes WebView2Loader.dll beside the executable, from the program's embedded copy (see
+// webview_window_embed_loader in CMake).
 void initializeWindowing();
 
 // The folder the executable runs from. Windows finds the WebView2 loader beside it.

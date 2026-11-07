@@ -18,6 +18,17 @@ if(WIN32)
         platform/windows/WebViewWindow.cpp)
     target_include_directories(webview_window PRIVATE third_party/webview2/include platform/windows/compat)
     target_link_libraries(webview_window PUBLIC user32 gdi32 ole32 shell32 advapi32 uuid d3d11 dxgi dcomp)
+
+    # WebView2Loader.dll is written beside the executable at start, from resource 2 of the program. A program calls this with its
+    # target to embed the loader there, so its release can be the executable alone.
+    set(WEBVIEW_WINDOW_LOADER_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/bin/x64/WebView2Loader.dll" CACHE INTERNAL "")
+    function(webview_window_embed_loader target)
+        enable_language(RC)
+        set(rc "${CMAKE_CURRENT_BINARY_DIR}/${target}_webview2_loader.rc")
+        file(WRITE "${rc}" "2 RCDATA \"${WEBVIEW_WINDOW_LOADER_DLL}\"\n")
+        set_source_files_properties("${rc}" PROPERTIES OBJECT_DEPENDS "${WEBVIEW_WINDOW_LOADER_DLL}")
+        target_sources(${target} PRIVATE "${rc}")
+    endfunction()
 else()
     find_package(Threads REQUIRED)
     target_sources(webview_window PRIVATE platform/linux/WebViewWindow.cpp)
