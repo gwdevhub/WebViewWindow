@@ -278,6 +278,10 @@ void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
             return;
         }
         native->stage = "Waiting for the page to report that it's ready";
+        // Every successful navigation reports the page as loaded, as the Linux load-finished event does.
+        if (native->owner) {
+            native->owner->notifyPageLoaded();
+        }
     }), &native->navigationToken);
     sendPendingScripts(native);
 }

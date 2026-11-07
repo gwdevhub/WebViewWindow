@@ -34,6 +34,8 @@ struct NativeWindow {
     bool wantsFocus = false;
     // Whether a window dropped after a move or resize is kept inside its monitor's work area.
     bool confined = true;
+    // The window this belongs to, which the load events report to.
+    WebViewWindow* owner = nullptr;
 };
 
 namespace {
@@ -111,6 +113,7 @@ struct GtkApi {
     void (*web_view_set_background_color)(WebKitWebView*, const RgbaColor*) = nullptr;
     WebKitSettings* (*web_view_get_settings)(WebKitWebView*) = nullptr;
     void (*settings_set_enable_developer_extras)(WebKitSettings*, gboolean) = nullptr;
+    void (*settings_set_hardware_acceleration_policy)(WebKitSettings*, WebKitHardwareAccelerationPolicy) = nullptr;
     WebKitWebInspector* (*web_view_get_inspector)(WebKitWebView*) = nullptr;
     void (*web_inspector_show)(WebKitWebInspector*) = nullptr;
     gulong (*g_signal_connect_data)(gpointer, const gchar*, GCallback, gpointer, GClosureNotify, GConnectFlags) = nullptr;
@@ -198,6 +201,7 @@ GtkApi loadApi() {
     bind(api.web_view_run_javascript, library, "webkit_web_view_run_javascript");
     bind(api.web_view_get_settings, library, "webkit_web_view_get_settings");
     bind(api.settings_set_enable_developer_extras, library, "webkit_settings_set_enable_developer_extras");
+    bind(api.settings_set_hardware_acceleration_policy, library, "webkit_settings_set_hardware_acceleration_policy");
     bind(api.web_view_get_inspector, library, "webkit_web_view_get_inspector");
     bind(api.web_inspector_show, library, "webkit_web_inspector_show");
     bind(api.g_signal_connect_data, library, "g_signal_connect_data");
@@ -247,8 +251,12 @@ void showLoadedPage(NativeWindow* native) {
 }
 
 void onLoadChanged(WebKitWebView*, WebKitLoadEvent event, gpointer data) {
+    auto* native = static_cast<NativeWindow*>(data);
     if (event == WEBKIT_LOAD_FINISHED) {
-        showLoadedPage(static_cast<NativeWindow*>(data));
+        showLoadedPage(native);
+        if (native->owner) {
+            native->owner->notifyPageLoaded();
+        }
     }
 }
 
@@ -314,6 +322,7 @@ void WebViewWindow::platformOpen() {
     const GtkApi& gtk = api();
     native_.reset(new NativeWindow);
     NativeWindow& native = *native_;
+    native.owner = this;
 
     native.window = gtk.window_new(GTK_WINDOW_TOPLEVEL);
     auto* window = reinterpret_cast<GtkWindow*>(native.window);
@@ -355,6 +364,15 @@ void WebViewWindow::platformOpen() {
                               reinterpret_cast<GCallback>(onScriptMessage), this, nullptr, static_cast<GConnectFlags>(0));
     gtk.user_content_manager_register_script_message_handler_with_reply(native.manager, "host", nullptr);
     native.view = reinterpret_cast<WebKitWebView*>(gtk.web_view_new_with_user_content_manager(native.manager));
+    if (options_.hardwareAcceleration) {
+        WebKitHardwareAccelerationPolicy policy = WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND;
+        switch (*options_.hardwareAcceleration) {
+            case HardwareAcceleration::OnDemand: policy = WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND; break;
+            case HardwareAcceleration::Always: policy = WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS; break;
+            case HardwareAcceleration::Never: policy = WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER; break;
+        }
+        gtk.settings_set_hardware_acceleration_policy(gtk.web_view_get_settings(native.view), policy);
+    }
     if (options_.transparent) {
         const RgbaColor clear{0, 0, 0, 0};
         gtk.web_view_set_background_color(native.view, &clear);

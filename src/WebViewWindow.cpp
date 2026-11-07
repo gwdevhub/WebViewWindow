@@ -356,6 +356,10 @@ void WebViewWindow::notifyFrameChanged() {
     onFrameChanged();
 }
 
+void WebViewWindow::notifyPageLoaded() {
+    onPageLoaded();
+}
+
 void setUiScale(int percent) {
     if (percent < 50 || percent > 200 || percent == uiScale) {
         return;

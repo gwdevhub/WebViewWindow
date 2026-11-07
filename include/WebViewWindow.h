@@ -19,6 +19,9 @@
 // The edges and corners a window can be resized from, in the order GDK's edges use.
 enum class ResizeEdge { NorthWest, North, NorthEast, West, East, SouthWest, South, SouthEast };
 
+// How the page uses the GPU. Linux's WebKitGTK takes it as a setting; Windows's WebView2 has no such setting, so it's ignored there.
+enum class HardwareAcceleration { OnDemand, Always, Never };
+
 struct WindowOptions {
     std::string title;
     int width = 300;
@@ -51,6 +54,8 @@ struct WindowOptions {
     // The window's background is see-through, where the platform can show the desktop through it. Nothing is drawn behind the
     // page, so the page fills whatever it wants drawn.
     bool transparent = true;
+    // The page's hardware acceleration policy. Unset leaves WebKit's default in place.
+    std::optional<HardwareAcceleration> hardwareAcceleration;
     // The folder WebView2 keeps its profile and caches in. Empty means a folder beside the executable.
     std::filesystem::path webViewDataFolder;
     // How long a page may take to report that it's ready before the window fails. Zero means no limit.
@@ -144,6 +149,8 @@ public:
     void notifyClosed();
     void notifyFocusLost();
     void notifyFrameChanged();
+    // Called by the platform when a page has finished loading. Every navigation to a new page calls it, so the host can set the page up again.
+    void notifyPageLoaded();
 
 protected:
     // Return false to keep the window open. A window that returns false should hide itself to stay reusable.
@@ -155,6 +162,9 @@ protected:
     virtual void onFrameChanged() {}
     // Called when the page reports that it's ready. The window has been shown by then.
     virtual void onPageReady() {}
+    // Called each time a page finishes loading, including after navigations. Unlike onPageReady, this comes from the platform's load
+    // events, so the host can inject its own script here.
+    virtual void onPageLoaded() {}
     bool pageReady() const { return pageReady_; }
     // Called when the web view fails: its page didn't report ready in time, its process failed, or the page reported an error.
     // The default shows the error and closes the window.

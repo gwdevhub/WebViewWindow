@@ -19,3 +19,10 @@ typedef enum {
     WEBKIT_LOAD_COMMITTED,
     WEBKIT_LOAD_FINISHED
 } WebKitLoadEvent;
+
+// The hardware acceleration policy a settings object takes.
+typedef enum {
+    WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND,
+    WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS,
+    WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER
+} WebKitHardwareAccelerationPolicy;
