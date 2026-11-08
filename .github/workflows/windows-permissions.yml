@@ -1,8 +1,8 @@
-name: Windows permission test
+name: Windows permission and download tests
 
 on:
   push:
-    branches: [ "windows-permission-test" ]
+    branches: [ "windows-permission-test", "downloads" ]
   workflow_dispatch:
 
 jobs:
@@ -32,3 +32,7 @@ jobs:
       - name: Run the permission test
         shell: pwsh
         run: ./tests/windows_permission_test.ps1 -BuildDir build
+
+      - name: Run the download test
+        shell: pwsh
+        run: ./tests/windows_download_test.ps1 -BuildDir build
