@@ -29,9 +29,14 @@ struct NativeWindow {
     // Whether the library moves the window as it is dragged, rather than the window manager.
     bool manual = false;
     // The window stays hidden until its page has loaded, so it never shows as an empty frame.
-    bool pageLoaded = false;
+    // The window stays hidden until its page reports that it's ready, so it never shows an empty or half-drawn page.
+    bool pageReady = false;
     bool wantsVisible = false;
     bool wantsFocus = false;
+    // The window's position when it was last hidden. GTK centres a toplevel again each time it's shown, so it's put back on show.
+    bool hasHiddenPosition = false;
+    int hiddenX = 0;
+    int hiddenY = 0;
     // Whether a window dropped after a move or resize is kept inside its monitor's work area.
     bool confined = true;
     // The window this belongs to, which the load events report to.
@@ -118,7 +123,29 @@ struct GtkApi {
     void (*web_inspector_show)(WebKitWebInspector*) = nullptr;
     gulong (*g_signal_connect_data)(gpointer, const gchar*, GCallback, gpointer, GClosureNotify, GConnectFlags) = nullptr;
     void (*g_free)(gpointer) = nullptr;
+    void* (*status_icon_new_from_pixbuf)(GdkPixbuf*) = nullptr;
+    void (*status_icon_set_tooltip_text)(void*, const gchar*) = nullptr;
+    void (*status_icon_set_visible)(void*, gboolean) = nullptr;
+    void (*status_icon_position_menu)(GtkWidget*, gint*, gint*, gboolean*, gpointer) = nullptr;
+    GtkWidget* (*menu_new)() = nullptr;
+    GtkWidget* (*menu_item_new_with_label)(const gchar*) = nullptr;
+    void (*menu_shell_append)(GtkMenuShell*, GtkWidget*) = nullptr;
+    void (*menu_popup)(GtkWidget*, GtkWidget*, GtkWidget*, void*, gpointer, guint, guint32) = nullptr;
     char* (*jsc_value_to_string)(JSCValue*) = nullptr;
+    // Permission requests: the page asks for the microphone, camera or notifications, and the host allows or denies them.
+    gboolean (*permission_request_allow)(WebKitPermissionRequest*) = nullptr;
+    gboolean (*permission_request_deny)(WebKitPermissionRequest*) = nullptr;
+    void (*web_context_initialize_notification_permissions)(WebKitWebContext*, GList*, GList*) = nullptr;
+    WebKitWebContext* (*web_view_get_context)(WebKitWebView*) = nullptr;
+    gpointer (*security_origin_new_for_uri)(const gchar*) = nullptr;
+    GList* (*list_append)(GList*, gpointer) = nullptr;
+    void (*list_free)(GList*) = nullptr;
+    gsize (*user_media_permission_request_get_type)() = nullptr;
+    gsize (*notification_permission_request_get_type)() = nullptr;
+    gboolean (*user_media_permission_is_for_audio_device)(WebKitUserMediaPermissionRequest*) = nullptr;
+    gboolean (*user_media_permission_is_for_video_device)(WebKitUserMediaPermissionRequest*) = nullptr;
+    const gchar* (*web_view_get_uri)(WebKitWebView*) = nullptr;
+    gboolean (*g_type_check_instance_is_a)(gpointer, gsize) = nullptr;
 };
 
 template <typename F>
@@ -206,7 +233,28 @@ GtkApi loadApi() {
     bind(api.web_inspector_show, library, "webkit_web_inspector_show");
     bind(api.g_signal_connect_data, library, "g_signal_connect_data");
     bind(api.g_free, library, "g_free");
+    bind(api.status_icon_new_from_pixbuf, library, "gtk_status_icon_new_from_pixbuf");
+    bind(api.status_icon_set_tooltip_text, library, "gtk_status_icon_set_tooltip_text");
+    bind(api.status_icon_set_visible, library, "gtk_status_icon_set_visible");
+    bind(api.status_icon_position_menu, library, "gtk_status_icon_position_menu");
+    bind(api.menu_new, library, "gtk_menu_new");
+    bind(api.menu_item_new_with_label, library, "gtk_menu_item_new_with_label");
+    bind(api.menu_shell_append, library, "gtk_menu_shell_append");
+    bind(api.menu_popup, library, "gtk_menu_popup");
     bind(api.jsc_value_to_string, library, "jsc_value_to_string");
+    bind(api.permission_request_allow, library, "webkit_permission_request_allow");
+    bind(api.permission_request_deny, library, "webkit_permission_request_deny");
+    bind(api.user_media_permission_request_get_type, library, "webkit_user_media_permission_request_get_type");
+    bind(api.notification_permission_request_get_type, library, "webkit_notification_permission_request_get_type");
+    bind(api.user_media_permission_is_for_audio_device, library, "webkit_user_media_permission_is_for_audio_device");
+    bind(api.user_media_permission_is_for_video_device, library, "webkit_user_media_permission_is_for_video_device");
+    bind(api.web_view_get_uri, library, "webkit_web_view_get_uri");
+    bind(api.g_type_check_instance_is_a, library, "g_type_check_instance_is_a");
+    bind(api.web_context_initialize_notification_permissions, library, "webkit_web_context_initialize_notification_permissions");
+    bind(api.web_view_get_context, library, "webkit_web_view_get_context");
+    bind(api.security_origin_new_for_uri, library, "webkit_security_origin_new_for_uri");
+    bind(api.list_append, library, "g_list_append");
+    bind(api.list_free, library, "g_list_free");
     return api;
 }
 
@@ -237,10 +285,9 @@ guint32 serverTime(GtkWidget* widget) {
     return gdkWindow ? api().x11_server_time(gdkWindow) : GDK_CURRENT_TIME;
 }
 
-// Shows the window once its page has loaded, if it's wanted yet. Focus goes to it only if it was asked for.
-void showLoadedPage(NativeWindow* native) {
-    native->pageLoaded = true;
-    if (!native->window || !native->wantsVisible) {
+// Shows the window once its page has reported ready, if it's wanted yet. Focus goes to it only if it was asked for.
+void showReadyPage(NativeWindow* native) {
+    if (!native->window || !native->wantsVisible || !native->pageReady) {
         return;
     }
     api().widget_show_all(native->window);
@@ -253,7 +300,6 @@ void showLoadedPage(NativeWindow* native) {
 void onLoadChanged(WebKitWebView*, WebKitLoadEvent event, gpointer data) {
     auto* native = static_cast<NativeWindow*>(data);
     if (event == WEBKIT_LOAD_FINISHED) {
-        showLoadedPage(native);
         if (native->owner) {
             native->owner->notifyPageLoaded();
         }
@@ -290,6 +336,71 @@ gboolean onWebProcessCrashed(WebKitWebView* view, gpointer data) {
     runOnUiThread([message] {
         showError(message);
     });
+    return TRUE;
+}
+
+// WebKitGTK denies notifications for an origin until the application has said otherwise. The window's own page origin is decided
+// here, once, by the host: allowed when the host allows notifications, and disallowed when it refuses them. An origin the host leaves
+// open is asked about when the page asks, through onPermissionRequested.
+void initializeNotifications(WebViewWindow& window, WebKitWebContext* context) {
+    const std::string url = window.devUrl();
+    if (url.empty()) {
+        return;
+    }
+    const std::optional<bool> answer = window.decidePermission(PagePermission::Notifications, url);
+    if (!answer) {
+        return;
+    }
+    gpointer origin = api().security_origin_new_for_uri(url.c_str());
+    GList* list = api().list_append(nullptr, origin);
+    if (*answer) {
+        api().web_context_initialize_notification_permissions(context, list, nullptr);
+    } else {
+        api().web_context_initialize_notification_permissions(context, nullptr, list);
+    }
+    // WebKit keeps the origin, so only the list is freed here.
+    api().list_free(list);
+}
+
+// The page asks for a permission. The host decides for each part of the request; when any part has no answer, WebKit's default
+// (deny) stays in place by returning FALSE. Returning TRUE tells WebKit the request was answered.
+gboolean onPermissionRequested(WebKitWebView* view, WebKitPermissionRequest* request, gpointer data) {
+    auto* window = static_cast<WebViewWindow*>(data);
+    const char* uri = api().web_view_get_uri(view);
+    const std::string pageUrl = uri ? uri : "";
+
+    std::vector<PagePermission> parts;
+    if (api().g_type_check_instance_is_a(request, api().user_media_permission_request_get_type())) {
+        auto* media = reinterpret_cast<WebKitUserMediaPermissionRequest*>(request);
+        if (api().user_media_permission_is_for_audio_device(media)) {
+            parts.push_back(PagePermission::Microphone);
+        }
+        if (api().user_media_permission_is_for_video_device(media)) {
+            parts.push_back(PagePermission::Camera);
+        }
+        // A screen share and other media kinds have no answer here, so they keep WebKit's default.
+        if (parts.empty()) {
+            return FALSE;
+        }
+    } else if (api().g_type_check_instance_is_a(request, api().notification_permission_request_get_type())) {
+        parts.push_back(PagePermission::Notifications);
+    } else {
+        return FALSE;
+    }
+
+    bool allowed = true;
+    for (const PagePermission part : parts) {
+        const std::optional<bool> answer = window->decidePermission(part, pageUrl);
+        if (!answer) {
+            return FALSE;
+        }
+        allowed = allowed && *answer;
+    }
+    if (allowed) {
+        api().permission_request_allow(request);
+    } else {
+        api().permission_request_deny(request);
+    }
     return TRUE;
 }
 
@@ -380,6 +491,9 @@ void WebViewWindow::platformOpen() {
     gtk.container_add(reinterpret_cast<GtkContainer*>(native.window), reinterpret_cast<GtkWidget*>(native.view));
     gtk.g_signal_connect_data(native.view, "web-process-crashed", reinterpret_cast<GCallback>(onWebProcessCrashed), this,
                               nullptr, static_cast<GConnectFlags>(0));
+    initializeNotifications(*this, gtk.web_view_get_context(native.view));
+    gtk.g_signal_connect_data(native.view, "permission-request", reinterpret_cast<GCallback>(onPermissionRequested), this,
+                              nullptr, static_cast<GConnectFlags>(0));
 
     native.wantsVisible = options_.visible;
     native.confined = options_.confinedToWorkArea;
@@ -415,7 +529,7 @@ void WebViewWindow::platformPresent() {
         return;
     }
     native_->wantsVisible = true;
-    if (!native_->pageLoaded) {
+    if (!native_->pageReady) {
         native_->wantsFocus = true;
         return;
     }
@@ -665,12 +779,21 @@ void WebViewWindow::platformShow(bool visible) {
         return;
     }
     native_->wantsVisible = visible;
-    if (!native_->pageLoaded) {
+    if (!native_->pageReady) {
         return;
     }
     if (visible) {
+        // Moved before the window is shown: a window manager can place a window that's moved after it maps.
+        if (native_->hasHiddenPosition) {
+            api().window_move(reinterpret_cast<GtkWindow*>(native_->window), native_->hiddenX, native_->hiddenY);
+            native_->hasHiddenPosition = false;
+        }
         api().widget_show_all(native_->window);
     } else {
+        const ScreenRect frame = frameOf(native_->window);
+        native_->hiddenX = frame.x;
+        native_->hiddenY = frame.y;
+        native_->hasHiddenPosition = true;
         api().widget_hide(native_->window);
     }
 }
@@ -746,7 +869,13 @@ void WebViewWindow::platformOpenDevTools() {
 }
 
 // WebKitGTK shows the window when its page has loaded, so a ready page has nothing more to do here.
-void WebViewWindow::platformPageReady() {}
+void WebViewWindow::platformPageReady() {
+    if (!native_) {
+        return;
+    }
+    native_->pageReady = true;
+    showReadyPage(native_.get());
+}
 
 void WebViewWindow::platformRunScript(const std::string& script) {
     if (native_ && native_->view) {
@@ -822,6 +951,78 @@ void setApplicationIcon(const std::string& png) {
         }
         applicationIcon = scaled;
     }
+}
+
+namespace {
+
+// The tray icon and its menu. Its callbacks run on the GTK thread, which is the event loop's thread.
+struct TrayState {
+    void* icon = nullptr;
+    GtkWidget* menu = nullptr;
+    std::function<void()> onActivate;
+    std::vector<std::unique_ptr<std::function<void()>>> actions;
+};
+
+std::unique_ptr<TrayState> trayState;
+
+void onTrayActivate(void*, gpointer) {
+    if (trayState && trayState->onActivate) {
+        trayState->onActivate();
+    }
+}
+
+void onTrayPopupMenu(void*, guint button, guint time, gpointer) {
+    if (!trayState || !trayState->menu) {
+        return;
+    }
+    api().widget_show_all(trayState->menu);
+    api().menu_popup(trayState->menu, nullptr, nullptr, reinterpret_cast<void*>(api().status_icon_position_menu),
+                     trayState->icon, button, time);
+}
+
+void onMenuItemActivate(void*, gpointer action) {
+    auto* run = static_cast<std::function<void()>*>(action);
+    if (run && *run) {
+        (*run)();
+    }
+}
+
+}  // namespace
+
+bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu) {
+    ensureGtk();
+    if (!applicationIcon) {
+        return false;
+    }
+    removeTrayIcon();
+    auto state = std::make_unique<TrayState>();
+    state->onActivate = std::move(onActivate);
+    state->menu = api().menu_new();
+    for (auto& entry : menu) {
+        auto action = std::make_unique<std::function<void()>>(std::move(entry.action));
+        GtkWidget* item = api().menu_item_new_with_label(entry.label.c_str());
+        api().g_signal_connect_data(item, "activate", reinterpret_cast<GCallback>(onMenuItemActivate), action.get(), nullptr, static_cast<GConnectFlags>(0));
+        api().menu_shell_append(reinterpret_cast<GtkMenuShell*>(state->menu), item);
+        state->actions.push_back(std::move(action));
+    }
+    state->icon = api().status_icon_new_from_pixbuf(applicationIcon);
+    api().status_icon_set_tooltip_text(state->icon, tooltip.c_str());
+    api().g_signal_connect_data(state->icon, "activate", reinterpret_cast<GCallback>(onTrayActivate), nullptr, nullptr, static_cast<GConnectFlags>(0));
+    api().g_signal_connect_data(state->icon, "popup-menu", reinterpret_cast<GCallback>(onTrayPopupMenu), nullptr, nullptr, static_cast<GConnectFlags>(0));
+    api().status_icon_set_visible(state->icon, TRUE);
+    trayState = std::move(state);
+    return true;
+}
+
+void removeTrayIcon() {
+    if (!trayState) {
+        return;
+    }
+    api().status_icon_set_visible(trayState->icon, FALSE);
+    if (trayState->menu) {
+        api().widget_destroy(trayState->menu);
+    }
+    trayState.reset();
 }
 
 void runEventLoop() {

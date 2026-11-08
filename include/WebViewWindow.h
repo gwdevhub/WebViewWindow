@@ -22,6 +22,9 @@ enum class ResizeEdge { NorthWest, North, NorthEast, West, East, SouthWest, Sout
 // How the page uses the GPU. Linux's WebKitGTK takes it as a setting; Windows's WebView2 has no such setting, so it's ignored there.
 enum class HardwareAcceleration { OnDemand, Always, Never };
 
+// The permissions a page can ask for that the platforms report the same way. Any other request is Other.
+enum class PagePermission { Microphone, Camera, Notifications, Other };
+
 struct WindowOptions {
     std::string title;
     int width = 300;
@@ -152,6 +155,10 @@ public:
     void notifyClosed();
     void notifyFocusLost();
     void notifyFrameChanged();
+    // Called by the platform when the page asks for a permission. pageUrl is the page's address. Returns true to allow the request,
+    // false to deny it, or nothing to leave the platform's default in place. A request for several things at once (microphone and
+    // camera together) is allowed only when every part is.
+    std::optional<bool> decidePermission(PagePermission permission, const std::string& pageUrl);
     // Called by the platform when a page has finished loading. Every navigation to a new page calls it, so the host can set the page up again.
     void notifyPageLoaded();
 
@@ -172,6 +179,8 @@ protected:
     // Called when the web view fails: its page didn't report ready in time, its process failed, or the page reported an error.
     // The default shows the error and closes the window.
     virtual void onWebViewFailure(const std::string& message);
+    // The host's answer to a permission request. The default leaves the platform's default in place.
+    virtual std::optional<bool> onPermissionRequest(PagePermission /*permission*/, const std::string& /*pageUrl*/) { return std::nullopt; }
 
 private:
     // Each platform implements these in platform/<os>/WebViewWindow.cpp.
@@ -266,6 +275,18 @@ const std::string& applicationName();
 // Sets the icon every window shows, from the PNG bytes the host embeds. Windows takes its icon from the executable's resource
 // instead, so there it does nothing.
 void setApplicationIcon(const std::string& png);
+
+// An entry in the system tray icon's menu. Its action runs on the event loop's thread.
+struct TrayMenuItem {
+    std::string label;
+    std::function<void()> action;
+};
+
+// Shows the application icon in the system tray. Clicking the icon runs onActivate, and the menu opens on a right click. Returns
+// false when the platform has no tray icon yet, or setApplicationIcon hasn't been called, so the host can fall back to its own
+// behaviour. The icon stays until removeTrayIcon is called.
+bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
+void removeTrayIcon();
 
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but
 // they aren't part of the window.

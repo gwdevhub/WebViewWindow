@@ -48,6 +48,8 @@ start_example() {
         echo "FAIL: no example at $bin"
         exit 1
     fi
+    # A test can start the example more than once, so the previous run's command pipe is replaced.
+    rm -f "$work/commands"
     mkfifo "$work/commands"
     mkdir -p "$work/home"
     touch "$work/out.txt"

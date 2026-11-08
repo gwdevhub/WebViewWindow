@@ -16,6 +16,8 @@ typedef int gboolean;
 #define TRUE 1
 #define FALSE 0
 typedef void* gpointer;
+// A GLib list, which the launcher only passes on.
+typedef struct _GList GList;
 typedef const void* gconstpointer;
 typedef size_t gsize;
 typedef ssize_t gssize;
