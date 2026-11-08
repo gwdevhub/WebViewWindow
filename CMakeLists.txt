@@ -17,6 +17,9 @@ if(WIN32)
         platform/windows/WebView2.cpp
         platform/windows/WebViewWindow.cpp)
     target_include_directories(webview_window PRIVATE third_party/webview2/include platform/windows/compat)
+    # The Windows code uses Windows 10 calls (GetDpiForWindow, WS_EX_NOREDIRECTIONBITMAP), so the API level is set here rather than left
+    # to each toolchain's default, which older MinGW builds keep at Windows 7 or 8.
+    target_compile_definitions(webview_window PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     target_link_libraries(webview_window PUBLIC user32 gdi32 ole32 shell32 advapi32 uuid d3d11 dxgi dcomp)
 
     # WebView2Loader.dll is written beside the executable at start, from resource 2 of the program. A program calls this with its
