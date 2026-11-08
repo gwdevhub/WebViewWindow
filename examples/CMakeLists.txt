@@ -1,6 +1,8 @@
 # The example application. main.cpp is the same on every platform; the desktop functions it needs come from the host for the platform.
 if(WIN32)
     set(WEBVIEW_WINDOW_EXAMPLE_HOST Host.windows.cpp)
+elseif(APPLE)
+    set(WEBVIEW_WINDOW_EXAMPLE_HOST Host.macos.mm)
 else()
     set(WEBVIEW_WINDOW_EXAMPLE_HOST Host.linux.cpp)
 endif()

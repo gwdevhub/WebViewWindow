@@ -951,7 +951,7 @@ int WebViewWindow::platformToIndependent(int pixels) const {
     return MulDiv(pixels, 96, GetDpiForWindow(native_->hwnd));
 }
 
-std::optional<Rect> WebViewWindow::platformFrame() const {
+std::optional<ScreenRect> WebViewWindow::platformFrame() const {
     // A minimised window reports an off-screen place, which isn't where it is.
     if (!native_ || !native_->hwnd || IsIconic(native_->hwnd)) {
         return std::nullopt;
@@ -960,7 +960,7 @@ std::optional<Rect> WebViewWindow::platformFrame() const {
     if (!GetWindowRect(native_->hwnd, &rect)) {
         return std::nullopt;
     }
-    return Rect{rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top};
+    return ScreenRect{rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top};
 }
 
 std::optional<RuntimeProblem> missingWindowingRuntime() {
@@ -1159,15 +1159,15 @@ std::optional<std::pair<int, int>> cursorPosition() {
     return std::make_pair(static_cast<int>(point.x), static_cast<int>(point.y));
 }
 
-std::optional<Rect> workArea() {
+std::optional<ScreenRect> workArea() {
     RECT area{};
     if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0)) {
         return std::nullopt;
     }
-    return Rect{area.left, area.top, area.right - area.left, area.bottom - area.top};
+    return ScreenRect{area.left, area.top, area.right - area.left, area.bottom - area.top};
 }
 
-std::optional<Rect> workAreaAt(const Rect& rect) {
+std::optional<ScreenRect> workAreaAt(const ScreenRect& rect) {
     const RECT bounds{rect.x, rect.y, rect.right(), rect.bottom()};
     MONITORINFO info{};
     info.cbSize = sizeof(info);
@@ -1175,6 +1175,6 @@ std::optional<Rect> workAreaAt(const Rect& rect) {
         return std::nullopt;
     }
     const RECT& area = info.rcWork;
-    return Rect{area.left, area.top, area.right - area.left, area.bottom - area.top};
+    return ScreenRect{area.left, area.top, area.right - area.left, area.bottom - area.top};
 }
 

@@ -20,7 +20,7 @@ struct NativeWindow {
     WebKitUserContentManager* manager = nullptr;
     // Set while the user drags or resizes the window: the window follows the pointer, and the frame it began with is kept here.
     bool snapping = false;
-    Rect dragStart;
+    ScreenRect dragStart;
     // The pointer where the drag began, and whether it resizes from edge.
     int pressX = 0;
     int pressY = 0;
@@ -448,7 +448,7 @@ bool pointerState(int& x, int& y) {
 }
 
 // The window's frame as GTK reports it, in logical pixels.
-Rect frameOf(GtkWidget* widget) {
+ScreenRect frameOf(GtkWidget* widget) {
     auto* window = reinterpret_cast<GtkWindow*>(widget);
     gint x = 0;
     gint y = 0;
@@ -456,15 +456,15 @@ Rect frameOf(GtkWidget* widget) {
     gint height = 0;
     api().window_get_position(window, &x, &y);
     api().window_get_size(window, &width, &height);
-    return Rect{x, y, width, height};
+    return ScreenRect{x, y, width, height};
 }
 
 // The frame a drag asks for when the pointer has moved by (dx, dy) since it began: snapped to the grid, and inside the work area
 // when the window is confined to it. A move keeps the size; a resize moves only the edges its edge names.
-Rect dragTarget(const NativeWindow& native, int dx, int dy) {
-    const Rect start = native.dragStart;
+ScreenRect dragTarget(const NativeWindow& native, int dx, int dy) {
+    const ScreenRect start = native.dragStart;
     const int scale = api().widget_get_scale_factor(native.window);
-    std::optional<Rect> area;
+    std::optional<ScreenRect> area;
     if (native.confined) {
         area = workAreaAt(start);
     }
@@ -475,7 +475,7 @@ Rect dragTarget(const NativeWindow& native, int dx, int dy) {
             x = std::max(area->x, std::min(x, area->right() - start.width));
             y = std::max(area->y, std::min(y, area->bottom() - start.height));
         }
-        return Rect{x, y, start.width, start.height};
+        return ScreenRect{x, y, start.width, start.height};
     }
     const ResizeEdge edge = native.edge;
     const bool west = edge == ResizeEdge::West || edge == ResizeEdge::NorthWest || edge == ResizeEdge::SouthWest;
@@ -514,12 +514,12 @@ Rect dragTarget(const NativeWindow& native, int dx, int dy) {
         }
         bottom = std::max(bottom, top + 1);
     }
-    return Rect{left, top, right - left, bottom - top};
+    return ScreenRect{left, top, right - left, bottom - top};
 }
 
 // Moves and resizes the window to the target, changing only what differs.
-void applyTarget(NativeWindow* native, const Rect& target) {
-    const Rect frame = frameOf(native->window);
+void applyTarget(NativeWindow* native, const ScreenRect& target) {
+    const ScreenRect frame = frameOf(native->window);
     auto* window = reinterpret_cast<GtkWindow*>(native->window);
     if (target.x != frame.x || target.y != frame.y) {
         api().window_move(window, target.x, target.y);
@@ -531,10 +531,10 @@ void applyTarget(NativeWindow* native, const Rect& target) {
 
 // Settles a drag the window manager ran, once the button is let go: the grid, then the work area when confined.
 void settleDroppedFrame(NativeWindow* native) {
-    const Rect start = native->dragStart;
-    const Rect frame = frameOf(native->window);
+    const ScreenRect start = native->dragStart;
+    const ScreenRect frame = frameOf(native->window);
     const int scale = api().widget_get_scale_factor(native->window);
-    Rect target = frame;
+    ScreenRect target = frame;
     if (!native->resizing) {
         target.x = snapToGrid(frame.x, scale);
         target.y = snapToGrid(frame.y, scale);
@@ -555,7 +555,7 @@ void settleDroppedFrame(NativeWindow* native) {
         if (bottom != start.bottom()) {
             bottom = snapToGrid(bottom, scale);
         }
-        target = Rect{left, top, right - left, bottom - top};
+        target = ScreenRect{left, top, right - left, bottom - top};
     }
     if (native->confined) {
         if (const auto area = workAreaAt(target)) {
@@ -692,7 +692,7 @@ int WebViewWindow::platformToIndependent(int pixels) const {
     return pixels;
 }
 
-std::optional<Rect> WebViewWindow::platformFrame() const {
+std::optional<ScreenRect> WebViewWindow::platformFrame() const {
     if (!native_ || !native_->window) {
         return std::nullopt;
     }
@@ -703,7 +703,7 @@ std::optional<Rect> WebViewWindow::platformFrame() const {
     gint height = 0;
     api().window_get_position(window, &x, &y);
     api().window_get_size(window, &width, &height);
-    return Rect{x, y, width, height};
+    return ScreenRect{x, y, width, height};
 }
 
 bool WebViewWindow::containsPointer() const {
@@ -851,23 +851,23 @@ void runOnUiThread(std::function<void()> task) {
 namespace {
 
 // The work area of a monitor, or nothing when there's no monitor.
-std::optional<Rect> areaOf(GdkMonitor* monitor) {
+std::optional<ScreenRect> areaOf(GdkMonitor* monitor) {
     if (!monitor) {
         return std::nullopt;
     }
     GdkRectangle area{};
     api().monitor_get_workarea(monitor, &area);
-    return Rect{area.x, area.y, area.width, area.height};
+    return ScreenRect{area.x, area.y, area.width, area.height};
 }
 
 }  // namespace
 
-std::optional<Rect> workArea() {
+std::optional<ScreenRect> workArea() {
     GdkDisplay* display = api().display_get_default();
     return display ? areaOf(api().display_get_primary_monitor(display)) : std::nullopt;
 }
 
-std::optional<Rect> workAreaAt(const Rect& rect) {
+std::optional<ScreenRect> workAreaAt(const ScreenRect& rect) {
     GdkDisplay* display = api().display_get_default();
     if (!display) {
         return std::nullopt;

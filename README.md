@@ -8,8 +8,8 @@ The library is meant to be used as a submodule. The host application:
 
 - calls `setApplicationName` and `initializeWindowing` at startup, and `setApplicationIcon` if it has a PNG icon to show,
 - subclasses `WebViewWindow`, overriding `html()` (or `devUrl()`) and `title()`,
-- defines the desktop functions declared in `include/WebViewWindow.h` for each platform it runs on: `showError`,
-  `cursorPosition`, `workArea` and `workAreaAt`. `example/Host.cpp` has the Windows versions.
+- defines `showError` for each platform it runs on, the one desktop function the library leaves to the host. The
+  `examples/Host.*` files have the Windows, Linux and macOS versions.
 
 ## Lifecycle
 
@@ -25,6 +25,8 @@ The library is meant to be used as a submodule. The host application:
   opens the window again.
 - When the user closes a window, `allowClose` decides. If it returns true, the window is destroyed. A window that should stay
   reusable returns false and hides itself, as it would through `hide`.
+- `WindowOptions::resizeEdges` draws strips along the window's edges, after each page load, and a press on one starts a resize
+  from that edge. The page doesn't need to draw them. It applies when `resizable` is set and the window isn't autosize.
 
 ## Layout
 
@@ -32,6 +34,7 @@ The library is meant to be used as a submodule. The host application:
 - `src/`: the parts shared by both platforms.
 - `platform/windows/`: the Win32 window, WebView2 callbacks, and DirectComposition for see-through windows.
 - `platform/linux/`: the GTK and WebKitGTK window. GTK is loaded at runtime, so only the headers in `third_party/gtk` are needed.
+- `platform/macos/`: the AppKit and WebKit window, in Objective-C++. A skeleton for now; see Status.
 - `third_party/`: WebView2 headers and loader, GTK headers, and nlohmann/json.
 
 ## Build
@@ -45,4 +48,6 @@ when the library is used as a submodule. The WebView2 runtime must be installed 
 ## Status
 
 - Windows: built and run with the example.
-- Linux: the code is in the tree, but it hasn't been built or run from this repository yet.
+- Linux: built and run with the example.
+- macOS: in progress. `platform/macos/` builds and links, but the window and web view are still stubs, so the example
+  doesn't show a window yet. A GitHub Actions workflow (`.github/workflows/macos.yml`) builds it on a macOS runner.
