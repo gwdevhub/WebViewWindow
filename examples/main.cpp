@@ -41,11 +41,23 @@ public:
     // The page to show instead of the built-in one, when the host was started with --url.
     std::string devUrl() const override { return url_; }
 
-    // The page's permission requests are allowed only when the host was started with --allow-permissions.
-    std::optional<bool> onPermissionRequest(PagePermission, const std::string&) override {
-        if (allowPermissions_) {
+    // The page's permission requests are allowed only when the host was started with --allow-permissions. Each request is reported
+    // as "permission <kind> <allowed|refused|default>", so a test can see what the platform asked.
+    std::optional<bool> onPermissionRequest(PagePermission permission, const std::string&) override {
+        const char* kind = "other";
+        switch (permission) {
+            case PagePermission::Microphone: kind = "microphone"; break;
+            case PagePermission::Camera: kind = "camera"; break;
+            case PagePermission::Notifications: kind = "notifications"; break;
+            case PagePermission::Other: break;
+        }
+        if (allowPermissions_ && permission != PagePermission::Other) {
+            std::printf("permission %s allowed\n", kind);
+            std::fflush(stdout);
             return true;
         }
+        std::printf("permission %s default\n", kind);
+        std::fflush(stdout);
         return std::nullopt;
     }
 

@@ -50,6 +50,8 @@ function Invoke-Probe([string[]]$options) {
     } else {
         Fail "the page never reported its probe"
     }
+    # The requests the platform made, for the log: what the host was asked, and what it answered.
+    Get-OutputLines | Where-Object { $_ -match '^permission ' } | ForEach-Object { Write-Host "  $_" }
     Stop-Example
     return $line
 }
