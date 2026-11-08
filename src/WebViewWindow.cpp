@@ -413,6 +413,10 @@ void WebViewWindow::notifyFrameChanged() {
     onFrameChanged();
 }
 
+std::optional<bool> WebViewWindow::decidePermission(PagePermission permission, const std::string& pageUrl) {
+    return onPermissionRequest(permission, pageUrl);
+}
+
 void WebViewWindow::notifyPageLoaded() {
     if (options_.resizeEdges && options_.resizable && !options_.autosize) {
         platformRunScript(resizeEdgesScript());

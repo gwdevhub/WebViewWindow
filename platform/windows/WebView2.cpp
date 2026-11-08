@@ -37,6 +37,10 @@ struct CallbackIid<ICoreWebView2ExecuteScriptCompletedHandler> {
     static const IID& value() { return IID_ICoreWebView2ExecuteScriptCompletedHandler; }
 };
 template <>
+struct CallbackIid<ICoreWebView2PermissionRequestedEventHandler> {
+    static const IID& value() { return IID_ICoreWebView2PermissionRequestedEventHandler; }
+};
+template <>
 struct CallbackIid<ICoreWebView2ProcessFailedEventHandler> {
     static const IID& value() { return IID_ICoreWebView2ProcessFailedEventHandler; }
 };
@@ -134,6 +138,19 @@ private:
     std::function<void(ICoreWebView2WebMessageReceivedEventArgs*)> received_;
 };
 
+class PermissionRequested : public ComObject<ICoreWebView2PermissionRequestedEventHandler> {
+public:
+    explicit PermissionRequested(std::function<void(ICoreWebView2PermissionRequestedEventArgs*)> requested)
+        : requested_(std::move(requested)) {}
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* /*sender*/, ICoreWebView2PermissionRequestedEventArgs* args) override {
+        requested_(args);
+        return S_OK;
+    }
+
+private:
+    std::function<void(ICoreWebView2PermissionRequestedEventArgs*)> requested_;
+};
+
 class ProcessFailed : public ComObject<ICoreWebView2ProcessFailedEventHandler> {
 public:
     explicit ProcessFailed(std::function<void(ICoreWebView2ProcessFailedEventArgs*)> failed) : failed_(std::move(failed)) {}
@@ -184,6 +201,10 @@ ICoreWebView2CursorChangedEventHandler* cursorChanged(std::function<void(ICoreWe
 
 ICoreWebView2WebMessageReceivedEventHandler* messageReceived(std::function<void(ICoreWebView2WebMessageReceivedEventArgs*)> received) {
     return new MessageReceived(std::move(received));
+}
+
+ICoreWebView2PermissionRequestedEventHandler* permissionRequested(std::function<void(ICoreWebView2PermissionRequestedEventArgs*)> requested) {
+    return new PermissionRequested(std::move(requested));
 }
 
 ICoreWebView2ProcessFailedEventHandler* processFailed(std::function<void(ICoreWebView2ProcessFailedEventArgs*)> failed) {

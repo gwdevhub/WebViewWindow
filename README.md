@@ -28,6 +28,15 @@ The library is meant to be used as a submodule. The host application:
 - `WindowOptions::resizeEdges` draws strips along the window's edges, after each page load, and a press on one starts a resize
   from that edge. The page doesn't need to draw them. It applies when `resizable` is set and the window isn't autosize.
 
+## Permissions
+
+- When a page asks for the microphone, camera or notifications, the host's `onPermissionRequest` answers. Return true to allow,
+  false to deny, or nothing to leave the platform's default: WebKitGTK denies the request, and WebView2 asks the user. The
+  answer comes from `decidePermission`, which the platform calls with the page's address.
+- On Linux, notifications are decided once for the window's own page origin (its `devUrl`) when the window opens, since WebKitGTK
+  otherwise denies them. A page at another origin is asked when it asks.
+- Other permission kinds reach `onPermissionRequest` as `PagePermission::Other` on Windows and are left to the platform on Linux.
+
 ## Layout
 
 - `include/`: the public headers. `WebViewWindow.h` is the window; `Messages.h` is the page-to-host message dispatch.
@@ -47,7 +56,7 @@ when the library is used as a submodule. The WebView2 runtime must be installed 
 
 ## Status
 
-- Windows: built and run with the example.
-- Linux: built and run with the example.
+- Windows: built and run with the example. The permission hook compiles with MinGW but hasn't been run on Windows yet.
+- Linux: built and run with the example. `tests/linux_example_test.sh` and `tests/linux_permission_test.sh` check it.
 - macOS: in progress. `platform/macos/` builds and links, but the window and web view are still stubs, so the example
   doesn't show a window yet. A GitHub Actions workflow (`.github/workflows/macos.yml`) builds it on a macOS runner.

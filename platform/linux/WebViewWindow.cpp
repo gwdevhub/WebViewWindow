@@ -132,6 +132,20 @@ struct GtkApi {
     void (*menu_shell_append)(GtkMenuShell*, GtkWidget*) = nullptr;
     void (*menu_popup)(GtkWidget*, GtkWidget*, GtkWidget*, void*, gpointer, guint, guint32) = nullptr;
     char* (*jsc_value_to_string)(JSCValue*) = nullptr;
+    // Permission requests: the page asks for the microphone, camera or notifications, and the host allows or denies them.
+    gboolean (*permission_request_allow)(WebKitPermissionRequest*) = nullptr;
+    gboolean (*permission_request_deny)(WebKitPermissionRequest*) = nullptr;
+    void (*web_context_initialize_notification_permissions)(WebKitWebContext*, GList*, GList*) = nullptr;
+    WebKitWebContext* (*web_view_get_context)(WebKitWebView*) = nullptr;
+    gpointer (*security_origin_new_for_uri)(const gchar*) = nullptr;
+    GList* (*list_append)(GList*, gpointer) = nullptr;
+    void (*list_free)(GList*) = nullptr;
+    gsize (*user_media_permission_request_get_type)() = nullptr;
+    gsize (*notification_permission_request_get_type)() = nullptr;
+    gboolean (*user_media_permission_is_for_audio_device)(WebKitUserMediaPermissionRequest*) = nullptr;
+    gboolean (*user_media_permission_is_for_video_device)(WebKitUserMediaPermissionRequest*) = nullptr;
+    const gchar* (*web_view_get_uri)(WebKitWebView*) = nullptr;
+    gboolean (*g_type_check_instance_is_a)(gpointer, gsize) = nullptr;
 };
 
 template <typename F>
@@ -228,6 +242,19 @@ GtkApi loadApi() {
     bind(api.menu_shell_append, library, "gtk_menu_shell_append");
     bind(api.menu_popup, library, "gtk_menu_popup");
     bind(api.jsc_value_to_string, library, "jsc_value_to_string");
+    bind(api.permission_request_allow, library, "webkit_permission_request_allow");
+    bind(api.permission_request_deny, library, "webkit_permission_request_deny");
+    bind(api.user_media_permission_request_get_type, library, "webkit_user_media_permission_request_get_type");
+    bind(api.notification_permission_request_get_type, library, "webkit_notification_permission_request_get_type");
+    bind(api.user_media_permission_is_for_audio_device, library, "webkit_user_media_permission_is_for_audio_device");
+    bind(api.user_media_permission_is_for_video_device, library, "webkit_user_media_permission_is_for_video_device");
+    bind(api.web_view_get_uri, library, "webkit_web_view_get_uri");
+    bind(api.g_type_check_instance_is_a, library, "g_type_check_instance_is_a");
+    bind(api.web_context_initialize_notification_permissions, library, "webkit_web_context_initialize_notification_permissions");
+    bind(api.web_view_get_context, library, "webkit_web_view_get_context");
+    bind(api.security_origin_new_for_uri, library, "webkit_security_origin_new_for_uri");
+    bind(api.list_append, library, "g_list_append");
+    bind(api.list_free, library, "g_list_free");
     return api;
 }
 
@@ -309,6 +336,71 @@ gboolean onWebProcessCrashed(WebKitWebView* view, gpointer data) {
     runOnUiThread([message] {
         showError(message);
     });
+    return TRUE;
+}
+
+// WebKitGTK denies notifications for an origin until the application has said otherwise. The window's own page origin is decided
+// here, once, by the host: allowed when the host allows notifications, and disallowed when it refuses them. An origin the host leaves
+// open is asked about when the page asks, through onPermissionRequested.
+void initializeNotifications(WebViewWindow& window, WebKitWebContext* context) {
+    const std::string url = window.devUrl();
+    if (url.empty()) {
+        return;
+    }
+    const std::optional<bool> answer = window.decidePermission(PagePermission::Notifications, url);
+    if (!answer) {
+        return;
+    }
+    gpointer origin = api().security_origin_new_for_uri(url.c_str());
+    GList* list = api().list_append(nullptr, origin);
+    if (*answer) {
+        api().web_context_initialize_notification_permissions(context, list, nullptr);
+    } else {
+        api().web_context_initialize_notification_permissions(context, nullptr, list);
+    }
+    // WebKit keeps the origin, so only the list is freed here.
+    api().list_free(list);
+}
+
+// The page asks for a permission. The host decides for each part of the request; when any part has no answer, WebKit's default
+// (deny) stays in place by returning FALSE. Returning TRUE tells WebKit the request was answered.
+gboolean onPermissionRequested(WebKitWebView* view, WebKitPermissionRequest* request, gpointer data) {
+    auto* window = static_cast<WebViewWindow*>(data);
+    const char* uri = api().web_view_get_uri(view);
+    const std::string pageUrl = uri ? uri : "";
+
+    std::vector<PagePermission> parts;
+    if (api().g_type_check_instance_is_a(request, api().user_media_permission_request_get_type())) {
+        auto* media = reinterpret_cast<WebKitUserMediaPermissionRequest*>(request);
+        if (api().user_media_permission_is_for_audio_device(media)) {
+            parts.push_back(PagePermission::Microphone);
+        }
+        if (api().user_media_permission_is_for_video_device(media)) {
+            parts.push_back(PagePermission::Camera);
+        }
+        // A screen share and other media kinds have no answer here, so they keep WebKit's default.
+        if (parts.empty()) {
+            return FALSE;
+        }
+    } else if (api().g_type_check_instance_is_a(request, api().notification_permission_request_get_type())) {
+        parts.push_back(PagePermission::Notifications);
+    } else {
+        return FALSE;
+    }
+
+    bool allowed = true;
+    for (const PagePermission part : parts) {
+        const std::optional<bool> answer = window->decidePermission(part, pageUrl);
+        if (!answer) {
+            return FALSE;
+        }
+        allowed = allowed && *answer;
+    }
+    if (allowed) {
+        api().permission_request_allow(request);
+    } else {
+        api().permission_request_deny(request);
+    }
     return TRUE;
 }
 
@@ -398,6 +490,9 @@ void WebViewWindow::platformOpen() {
     }
     gtk.container_add(reinterpret_cast<GtkContainer*>(native.window), reinterpret_cast<GtkWidget*>(native.view));
     gtk.g_signal_connect_data(native.view, "web-process-crashed", reinterpret_cast<GCallback>(onWebProcessCrashed), this,
+                              nullptr, static_cast<GConnectFlags>(0));
+    initializeNotifications(*this, gtk.web_view_get_context(native.view));
+    gtk.g_signal_connect_data(native.view, "permission-request", reinterpret_cast<GCallback>(onPermissionRequested), this,
                               nullptr, static_cast<GConnectFlags>(0));
 
     native.wantsVisible = options_.visible;

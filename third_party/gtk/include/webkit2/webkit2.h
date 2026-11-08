@@ -4,10 +4,15 @@
 #include "../gtk/gtk.h"
 
 typedef struct _WebKitWebView WebKitWebView;
+typedef struct _WebKitWebContext WebKitWebContext;
 typedef struct _WebKitUserContentManager WebKitUserContentManager;
 typedef struct _WebKitUserMessage WebKitUserMessage;
 typedef struct _WebKitSettings WebKitSettings;
 typedef struct _WebKitWebInspector WebKitWebInspector;
+// The requests a permission-request signal carries. The launcher only passes them on to the functions that answer them.
+typedef struct _WebKitPermissionRequest WebKitPermissionRequest;
+typedef struct _WebKitUserMediaPermissionRequest WebKitUserMediaPermissionRequest;
+typedef struct _WebKitNotificationPermissionRequest WebKitNotificationPermissionRequest;
 
 // The JavaScriptCore value a script message carries, from the JavaScriptCore part of WebKitGTK.
 typedef struct _JSCValue JSCValue;

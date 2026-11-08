@@ -4,7 +4,13 @@
 //   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
 //   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
+//   probe: the page asks for the microphone and for notifications, and the result is reported as "probe {json}": the
+//          notification permission before the request, the microphone request's result, and the notification request's result
 //   quit: the event loop stops
+// Options: --cooldown-ms N, --allow-permissions, and --url <address> to show a page other than the built-in one. A page at --url
+// must report ready itself, as the built-in page does.
+// With --allow-permissions, the host allows the microphone, camera and notification requests. Without it, they're left to the
+// platform's default.
 // The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height> area=<x>,<y>,<width>,<height>". The frame is the
 // window's rectangle on the screen in pixels, or "frame=none" when it has no native window. The area is the work area of the
 // monitor the window is on, or "area=none".
@@ -23,7 +29,25 @@ namespace {
 
 class ExampleWindow : public WebViewWindow {
 public:
-    explicit ExampleWindow(std::chrono::milliseconds cooldown) : WebViewWindow(options(cooldown)) {}
+    ExampleWindow(std::chrono::milliseconds cooldown, bool allowPermissions, std::string url)
+        : WebViewWindow(options(cooldown)), allowPermissions_(allowPermissions), url_(std::move(url)) {
+        handler().on("probe", [](WebViewWindow&, const Json& args, const Reply& reply) {
+            std::printf("probe %s\n", args.at(0).get<std::string>().c_str());
+            std::fflush(stdout);
+            reply.result(nullptr);
+        });
+    }
+
+    // The page to show instead of the built-in one, when the host was started with --url.
+    std::string devUrl() const override { return url_; }
+
+    // The page's permission requests are allowed only when the host was started with --allow-permissions.
+    std::optional<bool> onPermissionRequest(PagePermission, const std::string&) override {
+        if (allowPermissions_) {
+            return true;
+        }
+        return std::nullopt;
+    }
 
     void onPageReady() override {
         std::printf("loaded\n");
@@ -58,6 +82,9 @@ public:
     }
 
 private:
+    bool allowPermissions_;
+    std::string url_;
+
     static WindowOptions options(std::chrono::milliseconds cooldown) {
         WindowOptions options;
         options.cooldown = cooldown;
@@ -67,6 +94,27 @@ private:
         return options;
     }
 };
+
+// Reports the notification permission the page starts with, then asks for the microphone and for notifications. Each answer is the
+// error's name, or "granted" or "denied".
+const char* const kProbeScript = R"JS(
+(async () => {
+  const result = {notificationBefore: typeof Notification === 'undefined' ? 'none' : Notification.permission};
+  try {
+    await navigator.mediaDevices.getUserMedia({audio: true});
+    result.microphone = 'granted';
+  } catch (e) {
+    result.microphone = e && e.name ? e.name : String(e);
+  }
+  try {
+    result.notification = await Notification.requestPermission();
+  } catch (e) {
+    result.notification = e && e.name ? e.name : String(e);
+  }
+  (window.chrome && window.chrome.webview ? window.chrome.webview : window.webkit.messageHandlers.host)
+    .postMessage(JSON.stringify({id: Date.now(), method: 'probe', args: [JSON.stringify(result)]}));
+})();
+)JS";
 
 // The edge a "resize" command names, as the library's ResizeEdge.
 std::optional<ResizeEdge> edgeNamed(const std::string& name) {
@@ -86,13 +134,22 @@ std::optional<ResizeEdge> edgeNamed(const std::string& name) {
 int main(int argc, char** argv) {
     // --cooldown-ms N sets how long a hidden window keeps its web view. The default is the library's.
     std::chrono::milliseconds cooldown = std::chrono::minutes(2);
-    if (argc == 3 && std::string(argv[1]) == "--cooldown-ms") {
-        cooldown = std::chrono::milliseconds(std::stol(argv[2]));
+    bool allowPermissions = false;
+    std::string url;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--cooldown-ms" && i + 1 < argc) {
+            cooldown = std::chrono::milliseconds(std::stol(argv[++i]));
+        } else if (arg == "--allow-permissions") {
+            allowPermissions = true;
+        } else if (arg == "--url" && i + 1 < argc) {
+            url = argv[++i];
+        }
     }
     try {
         setApplicationName("WebViewWindow Example");
         initializeWindowing();
-        ExampleWindow window(cooldown);
+        ExampleWindow window(cooldown, allowPermissions, url);
         window.open();
 
         std::thread reader([&window] {
@@ -115,6 +172,8 @@ int main(int argc, char** argv) {
                     if (const auto edge = edgeNamed(line.substr(7))) {
                         runOnUiThread([&window, edge] { window.beginResize(*edge); });
                     }
+                } else if (line == "probe") {
+                    runOnUiThread([&window] { window.runScript(kProbeScript); });
                 } else if (line == "quit") {
                     runOnUiThread([] { stopEventLoop(); });
                     break;

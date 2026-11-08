@@ -10,6 +10,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -90,6 +91,7 @@ struct NativeWindow {
     EventRegistrationToken messageToken{};
     EventRegistrationToken processFailedToken{};
     EventRegistrationToken navigationToken{};
+    EventRegistrationToken permissionToken{};
     // The window stays hidden until its page has loaded, so it never shows as an empty frame.
     bool pageLoaded = false;
     bool wantsVisible = false;
@@ -238,6 +240,31 @@ void recoverFromProcessFailure(NativeWindow* native, COREWEBVIEW2_PROCESS_FAILED
     }
 }
 
+// The page asks for a permission. The host's answer is set on the request; when it has none, WebView2 keeps its own default.
+void answerPermissionRequest(NativeWindow* native, ICoreWebView2PermissionRequestedEventArgs* args) {
+    if (!native->owner) {
+        return;
+    }
+    COREWEBVIEW2_PERMISSION_KIND kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
+    args->get_PermissionKind(&kind);
+    PagePermission permission = PagePermission::Other;
+    switch (kind) {
+        case COREWEBVIEW2_PERMISSION_KIND_MICROPHONE: permission = PagePermission::Microphone; break;
+        case COREWEBVIEW2_PERMISSION_KIND_CAMERA: permission = PagePermission::Camera; break;
+        case COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS: permission = PagePermission::Notifications; break;
+        default: break;
+    }
+    std::string pageUrl;
+    LPWSTR uri = nullptr;
+    if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
+        pageUrl = toUtf8(uri);
+        CoTaskMemFree(uri);
+    }
+    if (const std::optional<bool> answer = native->owner->decidePermission(permission, pageUrl)) {
+        args->put_State(*answer ? COREWEBVIEW2_PERMISSION_STATE_ALLOW : COREWEBVIEW2_PERMISSION_STATE_DENY);
+    }
+}
+
 void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
     native->controller = controller;
     native->controller->AddRef();
@@ -258,6 +285,11 @@ void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
             }
         }),
         &native->messageToken);
+    native->webview->add_PermissionRequested(
+        webview2::permissionRequested([native](ICoreWebView2PermissionRequestedEventArgs* args) {
+            answerPermissionRequest(native, args);
+        }),
+        &native->permissionToken);
     native->webview->add_ProcessFailed(
         webview2::processFailed([native](ICoreWebView2ProcessFailedEventArgs* args) {
             COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
