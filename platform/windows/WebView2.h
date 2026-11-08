@@ -17,6 +17,7 @@ ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler* compositio
     std::function<void(HRESULT, ICoreWebView2CompositionController*)> done);
 ICoreWebView2CursorChangedEventHandler* cursorChanged(std::function<void(ICoreWebView2CompositionController*)> changed);
 ICoreWebView2WebMessageReceivedEventHandler* messageReceived(std::function<void(ICoreWebView2WebMessageReceivedEventArgs*)> received);
+ICoreWebView2DownloadStartingEventHandler* downloadStarting(std::function<void(ICoreWebView2DownloadStartingEventArgs*)> starting);
 ICoreWebView2PermissionRequestedEventHandler* permissionRequested(std::function<void(ICoreWebView2PermissionRequestedEventArgs*)> requested);
 ICoreWebView2ProcessFailedEventHandler* processFailed(std::function<void(ICoreWebView2ProcessFailedEventArgs*)> failed);
 ICoreWebView2NavigationCompletedEventHandler* navigationDone(std::function<void(ICoreWebView2NavigationCompletedEventArgs*)> done);

@@ -92,6 +92,7 @@ struct NativeWindow {
     EventRegistrationToken processFailedToken{};
     EventRegistrationToken navigationToken{};
     EventRegistrationToken permissionToken{};
+    EventRegistrationToken downloadToken{};
     // The window stays hidden until its page has loaded, so it never shows as an empty frame.
     bool pageLoaded = false;
     bool wantsVisible = false;
@@ -240,6 +241,20 @@ void recoverFromProcessFailure(NativeWindow* native, COREWEBVIEW2_PROCESS_FAILED
     }
 }
 
+// A download is starting: WebView2 has its own default path for it, which the chooser may replace. When the chooser has no answer the
+// default stays.
+void chooseDownload(ICoreWebView2DownloadStartingEventArgs* args) {
+    LPWSTR defaultPath = nullptr;
+    if (FAILED(args->get_ResultFilePath(&defaultPath)) || !defaultPath) {
+        return;
+    }
+    const std::string name = toUtf8(std::filesystem::path(defaultPath).filename().c_str());
+    CoTaskMemFree(defaultPath);
+    if (const std::optional<std::filesystem::path> path = chooseDownloadPath(name)) {
+        args->put_ResultFilePath(path->c_str());
+    }
+}
+
 // The page asks for a permission. The host's answer is set on the request; when it has none, WebView2 keeps its own default.
 void answerPermissionRequest(NativeWindow* native, ICoreWebView2PermissionRequestedEventArgs* args) {
     if (!native->owner) {
@@ -285,6 +300,14 @@ void attachWebView(NativeWindow* native, ICoreWebView2Controller* controller) {
             }
         }),
         &native->messageToken);
+    // Downloads are routed through ICoreWebView2_4, which the runtime offers from version 1.0.1020 onwards.
+    ICoreWebView2_4* webview4 = nullptr;
+    if (SUCCEEDED(native->webview->QueryInterface(IID_ICoreWebView2_4, reinterpret_cast<void**>(&webview4))) && webview4) {
+        webview4->add_DownloadStarting(
+            webview2::downloadStarting([](ICoreWebView2DownloadStartingEventArgs* args) { chooseDownload(args); }),
+            &native->downloadToken);
+        webview4->Release();
+    }
     native->webview->add_PermissionRequested(
         webview2::permissionRequested([native](ICoreWebView2PermissionRequestedEventArgs* args) {
             answerPermissionRequest(native, args);

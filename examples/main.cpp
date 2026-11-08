@@ -4,11 +4,12 @@
 //   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
 //   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
+//   download: the page clicks its first link with a download attribute, and the file is saved to the download folder
 //   probe: the page asks for the microphone and for notifications, and the result is reported as "probe {json}": the
 //          notification permission before the request, the microphone request's result, and the notification request's result
 //   quit: the event loop stops
-// Options: --cooldown-ms N, --allow-permissions, and --url <address> to show a page other than the built-in one. A page at --url
-// must report ready itself, as the built-in page does.
+// Options: --cooldown-ms N, --allow-permissions, --url <address> to show a page other than the built-in one, --data-folder <path>
+// for the folder WebView2 keeps its profile in, and --download-folder <path> for where downloads are saved. A page at --url must report ready itself, as the built-in page does.
 // With --allow-permissions, the host allows the microphone, camera and notification requests. Without it, they're left to the
 // platform's default.
 // The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height> area=<x>,<y>,<width>,<height>". The frame is the
@@ -16,6 +17,7 @@
 // monitor the window is on, or "area=none".
 
 #include <chrono>
+#include <filesystem>
 #include <cstdio>
 #include <exception>
 #include <iostream>
@@ -29,8 +31,8 @@ namespace {
 
 class ExampleWindow : public WebViewWindow {
 public:
-    ExampleWindow(std::chrono::milliseconds cooldown, bool allowPermissions, std::string url)
-        : WebViewWindow(options(cooldown)), allowPermissions_(allowPermissions), url_(std::move(url)) {
+    ExampleWindow(std::chrono::milliseconds cooldown, bool allowPermissions, std::string url, std::filesystem::path dataFolder)
+        : WebViewWindow(options(cooldown, std::move(dataFolder))), allowPermissions_(allowPermissions), url_(std::move(url)) {
         handler().on("probe", [](WebViewWindow&, const Json& args, const Reply& reply) {
             std::printf("probe %s\n", args.at(0).get<std::string>().c_str());
             std::fflush(stdout);
@@ -41,11 +43,23 @@ public:
     // The page to show instead of the built-in one, when the host was started with --url.
     std::string devUrl() const override { return url_; }
 
-    // The page's permission requests are allowed only when the host was started with --allow-permissions.
-    std::optional<bool> onPermissionRequest(PagePermission, const std::string&) override {
-        if (allowPermissions_) {
+    // The page's permission requests are allowed only when the host was started with --allow-permissions. Each request is reported
+    // as "permission <kind> <allowed|refused|default>", so a test can see what the platform asked.
+    std::optional<bool> onPermissionRequest(PagePermission permission, const std::string&) override {
+        const char* kind = "other";
+        switch (permission) {
+            case PagePermission::Microphone: kind = "microphone"; break;
+            case PagePermission::Camera: kind = "camera"; break;
+            case PagePermission::Notifications: kind = "notifications"; break;
+            case PagePermission::Other: break;
+        }
+        if (allowPermissions_ && permission != PagePermission::Other) {
+            std::printf("permission %s allowed\n", kind);
+            std::fflush(stdout);
             return true;
         }
+        std::printf("permission %s default\n", kind);
+        std::fflush(stdout);
         return std::nullopt;
     }
 
@@ -85,9 +99,10 @@ private:
     bool allowPermissions_;
     std::string url_;
 
-    static WindowOptions options(std::chrono::milliseconds cooldown) {
+    static WindowOptions options(std::chrono::milliseconds cooldown, std::filesystem::path dataFolder) {
         WindowOptions options;
         options.cooldown = cooldown;
+        options.webViewDataFolder = std::move(dataFolder);
         options.title = "WebViewWindow Example";
         options.width = 320;
         options.height = 160;
@@ -95,22 +110,26 @@ private:
     }
 };
 
+// Clicks the page's first link that has a download attribute. The click starts the download, which the chooser places.
+const char* const kDownloadScript = R"JS(
+(() => {
+  const link = document.querySelector('a[download]');
+  if (link) link.click();
+})();
+)JS";
+
 // Reports the notification permission the page starts with, then asks for the microphone and for notifications. Each answer is the
-// error's name, or "granted" or "denied".
+// error's name, "granted" or "denied", or "pending" when nobody answered in five seconds.
 const char* const kProbeScript = R"JS(
 (async () => {
+  // A request that nobody answers stays open (WebView2 shows its prompt), so it's reported as pending after a few seconds.
+  const within = (promise) => Promise.race([
+    promise.then((value) => value, (e) => (e && e.name ? e.name : String(e))),
+    new Promise((resolve) => setTimeout(() => resolve('pending'), 5000)),
+  ]);
   const result = {notificationBefore: typeof Notification === 'undefined' ? 'none' : Notification.permission};
-  try {
-    await navigator.mediaDevices.getUserMedia({audio: true});
-    result.microphone = 'granted';
-  } catch (e) {
-    result.microphone = e && e.name ? e.name : String(e);
-  }
-  try {
-    result.notification = await Notification.requestPermission();
-  } catch (e) {
-    result.notification = e && e.name ? e.name : String(e);
-  }
+  result.microphone = await within(navigator.mediaDevices.getUserMedia({audio: true}).then(() => 'granted'));
+  result.notification = await within(Notification.requestPermission());
   (window.chrome && window.chrome.webview ? window.chrome.webview : window.webkit.messageHandlers.host)
     .postMessage(JSON.stringify({id: Date.now(), method: 'probe', args: [JSON.stringify(result)]}));
 })();
@@ -136,6 +155,8 @@ int main(int argc, char** argv) {
     std::chrono::milliseconds cooldown = std::chrono::minutes(2);
     bool allowPermissions = false;
     std::string url;
+    std::filesystem::path dataFolder;
+    std::filesystem::path downloadFolder;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--cooldown-ms" && i + 1 < argc) {
@@ -144,12 +165,21 @@ int main(int argc, char** argv) {
             allowPermissions = true;
         } else if (arg == "--url" && i + 1 < argc) {
             url = argv[++i];
+        } else if (arg == "--data-folder" && i + 1 < argc) {
+            dataFolder = argv[++i];
+        } else if (arg == "--download-folder" && i + 1 < argc) {
+            downloadFolder = argv[++i];
         }
     }
     try {
         setApplicationName("WebViewWindow Example");
+        if (!downloadFolder.empty()) {
+            setDownloadChooser([downloadFolder](const std::string& name) -> std::optional<std::filesystem::path> {
+                return downloadFolder / name;
+            });
+        }
         initializeWindowing();
-        ExampleWindow window(cooldown, allowPermissions, url);
+        ExampleWindow window(cooldown, allowPermissions, url, dataFolder);
         window.open();
 
         std::thread reader([&window] {
@@ -172,6 +202,8 @@ int main(int argc, char** argv) {
                     if (const auto edge = edgeNamed(line.substr(7))) {
                         runOnUiThread([&window, edge] { window.beginResize(*edge); });
                     }
+                } else if (line == "download") {
+                    runOnUiThread([&window] { window.runScript(kDownloadScript); });
                 } else if (line == "probe") {
                     runOnUiThread([&window] { window.runScript(kProbeScript); });
                 } else if (line == "quit") {
