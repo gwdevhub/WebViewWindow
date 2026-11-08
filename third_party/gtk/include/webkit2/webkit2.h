@@ -5,6 +5,7 @@
 
 typedef struct _WebKitWebView WebKitWebView;
 typedef struct _WebKitWebContext WebKitWebContext;
+typedef struct _WebKitDownload WebKitDownload;
 typedef struct _WebKitUserContentManager WebKitUserContentManager;
 typedef struct _WebKitUserMessage WebKitUserMessage;
 typedef struct _WebKitSettings WebKitSettings;

@@ -37,6 +37,10 @@ struct CallbackIid<ICoreWebView2ExecuteScriptCompletedHandler> {
     static const IID& value() { return IID_ICoreWebView2ExecuteScriptCompletedHandler; }
 };
 template <>
+struct CallbackIid<ICoreWebView2DownloadStartingEventHandler> {
+    static const IID& value() { return IID_ICoreWebView2DownloadStartingEventHandler; }
+};
+template <>
 struct CallbackIid<ICoreWebView2PermissionRequestedEventHandler> {
     static const IID& value() { return IID_ICoreWebView2PermissionRequestedEventHandler; }
 };
@@ -138,6 +142,18 @@ private:
     std::function<void(ICoreWebView2WebMessageReceivedEventArgs*)> received_;
 };
 
+class DownloadStarting : public ComObject<ICoreWebView2DownloadStartingEventHandler> {
+public:
+    explicit DownloadStarting(std::function<void(ICoreWebView2DownloadStartingEventArgs*)> starting) : starting_(std::move(starting)) {}
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* /*sender*/, ICoreWebView2DownloadStartingEventArgs* args) override {
+        starting_(args);
+        return S_OK;
+    }
+
+private:
+    std::function<void(ICoreWebView2DownloadStartingEventArgs*)> starting_;
+};
+
 class PermissionRequested : public ComObject<ICoreWebView2PermissionRequestedEventHandler> {
 public:
     explicit PermissionRequested(std::function<void(ICoreWebView2PermissionRequestedEventArgs*)> requested)
@@ -201,6 +217,10 @@ ICoreWebView2CursorChangedEventHandler* cursorChanged(std::function<void(ICoreWe
 
 ICoreWebView2WebMessageReceivedEventHandler* messageReceived(std::function<void(ICoreWebView2WebMessageReceivedEventArgs*)> received) {
     return new MessageReceived(std::move(received));
+}
+
+ICoreWebView2DownloadStartingEventHandler* downloadStarting(std::function<void(ICoreWebView2DownloadStartingEventArgs*)> starting) {
+    return new DownloadStarting(std::move(starting));
 }
 
 ICoreWebView2PermissionRequestedEventHandler* permissionRequested(std::function<void(ICoreWebView2PermissionRequestedEventArgs*)> requested) {

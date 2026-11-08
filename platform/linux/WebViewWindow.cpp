@@ -140,6 +140,8 @@ struct GtkApi {
     gpointer (*security_origin_new_for_uri)(const gchar*) = nullptr;
     GList* (*list_append)(GList*, gpointer) = nullptr;
     void (*list_free)(GList*) = nullptr;
+    void (*download_set_destination)(WebKitDownload*, const gchar*) = nullptr;
+    gchar* (*filename_to_uri)(const gchar*, const gchar*, GError**) = nullptr;
     gsize (*user_media_permission_request_get_type)() = nullptr;
     gsize (*notification_permission_request_get_type)() = nullptr;
     gboolean (*user_media_permission_is_for_audio_device)(WebKitUserMediaPermissionRequest*) = nullptr;
@@ -252,6 +254,8 @@ GtkApi loadApi() {
     bind(api.g_type_check_instance_is_a, library, "g_type_check_instance_is_a");
     bind(api.web_context_initialize_notification_permissions, library, "webkit_web_context_initialize_notification_permissions");
     bind(api.web_view_get_context, library, "webkit_web_view_get_context");
+    bind(api.download_set_destination, library, "webkit_download_set_destination");
+    bind(api.filename_to_uri, library, "g_filename_to_uri");
     bind(api.security_origin_new_for_uri, library, "webkit_security_origin_new_for_uri");
     bind(api.list_append, library, "g_list_append");
     bind(api.list_free, library, "g_list_free");
@@ -360,6 +364,27 @@ void initializeNotifications(WebViewWindow& window, WebKitWebContext* context) {
     }
     // WebKit keeps the origin, so only the list is freed here.
     api().list_free(list);
+}
+
+// WebKit asks where a download goes: the chooser answers, and WebKit's default stays in place when there's no answer.
+gboolean onDecideDestination(WebKitDownload* download, const gchar* suggestedFilename, gpointer) {
+    const std::optional<std::filesystem::path> path = chooseDownloadPath(suggestedFilename ? suggestedFilename : "");
+    if (!path) {
+        return FALSE;
+    }
+    gchar* uri = api().filename_to_uri(path->c_str(), nullptr, nullptr);
+    if (!uri) {
+        return FALSE;
+    }
+    api().download_set_destination(download, uri);
+    api().g_free(uri);
+    return TRUE;
+}
+
+// A download has started on the context. Its destination is decided when WebKit asks for it.
+void onDownloadStarted(WebKitWebContext*, WebKitDownload* download, gpointer) {
+    api().g_signal_connect_data(download, "decide-destination", reinterpret_cast<GCallback>(onDecideDestination), nullptr,
+                                nullptr, static_cast<GConnectFlags>(0));
 }
 
 // The page asks for a permission. The host decides for each part of the request; when any part has no answer, WebKit's default
@@ -491,7 +516,15 @@ void WebViewWindow::platformOpen() {
     gtk.container_add(reinterpret_cast<GtkContainer*>(native.window), reinterpret_cast<GtkWidget*>(native.view));
     gtk.g_signal_connect_data(native.view, "web-process-crashed", reinterpret_cast<GCallback>(onWebProcessCrashed), this,
                               nullptr, static_cast<GConnectFlags>(0));
-    initializeNotifications(*this, gtk.web_view_get_context(native.view));
+    WebKitWebContext* context = gtk.web_view_get_context(native.view);
+    // The download handler is the same for every window, so it's connected to the shared context once.
+    static bool downloadsConnected = false;
+    if (!downloadsConnected) {
+        downloadsConnected = true;
+        gtk.g_signal_connect_data(context, "download-started", reinterpret_cast<GCallback>(onDownloadStarted), nullptr,
+                                  nullptr, static_cast<GConnectFlags>(0));
+    }
+    initializeNotifications(*this, context);
     gtk.g_signal_connect_data(native.view, "permission-request", reinterpret_cast<GCallback>(onPermissionRequested), this,
                               nullptr, static_cast<GConnectFlags>(0));
 

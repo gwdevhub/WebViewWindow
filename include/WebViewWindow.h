@@ -276,6 +276,13 @@ const std::string& applicationName();
 // instead, so there it does nothing.
 void setApplicationIcon(const std::string& png);
 
+// Chooses where a download is saved. It's called on the UI thread with the file name the page suggests, and returns the path to save
+// to, or nothing to keep the platform's default. Set it once, before a window opens. Without one, downloads use the platform's default.
+using DownloadChooser = std::function<std::optional<std::filesystem::path>(const std::string& suggestedName)>;
+void setDownloadChooser(DownloadChooser chooser);
+// The path the chooser picks for a download, or nothing when there's no chooser or it keeps the default. The platforms call it.
+std::optional<std::filesystem::path> chooseDownloadPath(const std::string& suggestedName);
+
 // An entry in the system tray icon's menu. Its action runs on the event loop's thread.
 struct TrayMenuItem {
     std::string label;

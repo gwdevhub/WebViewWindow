@@ -4,11 +4,12 @@
 //   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
 //   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
+//   download: the page clicks its first link with a download attribute, and the file is saved to the download folder
 //   probe: the page asks for the microphone and for notifications, and the result is reported as "probe {json}": the
 //          notification permission before the request, the microphone request's result, and the notification request's result
 //   quit: the event loop stops
-// Options: --cooldown-ms N, --allow-permissions, --url <address> to show a page other than the built-in one, and --data-folder <path>
-// for the folder WebView2 keeps its profile in. A page at --url must report ready itself, as the built-in page does.
+// Options: --cooldown-ms N, --allow-permissions, --url <address> to show a page other than the built-in one, --data-folder <path>
+// for the folder WebView2 keeps its profile in, and --download-folder <path> for where downloads are saved. A page at --url must report ready itself, as the built-in page does.
 // With --allow-permissions, the host allows the microphone, camera and notification requests. Without it, they're left to the
 // platform's default.
 // The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height> area=<x>,<y>,<width>,<height>". The frame is the
@@ -109,6 +110,14 @@ private:
     }
 };
 
+// Clicks the page's first link that has a download attribute. The click starts the download, which the chooser places.
+const char* const kDownloadScript = R"JS(
+(() => {
+  const link = document.querySelector('a[download]');
+  if (link) link.click();
+})();
+)JS";
+
 // Reports the notification permission the page starts with, then asks for the microphone and for notifications. Each answer is the
 // error's name, "granted" or "denied", or "pending" when nobody answered in five seconds.
 const char* const kProbeScript = R"JS(
@@ -147,6 +156,7 @@ int main(int argc, char** argv) {
     bool allowPermissions = false;
     std::string url;
     std::filesystem::path dataFolder;
+    std::filesystem::path downloadFolder;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--cooldown-ms" && i + 1 < argc) {
@@ -157,10 +167,17 @@ int main(int argc, char** argv) {
             url = argv[++i];
         } else if (arg == "--data-folder" && i + 1 < argc) {
             dataFolder = argv[++i];
+        } else if (arg == "--download-folder" && i + 1 < argc) {
+            downloadFolder = argv[++i];
         }
     }
     try {
         setApplicationName("WebViewWindow Example");
+        if (!downloadFolder.empty()) {
+            setDownloadChooser([downloadFolder](const std::string& name) -> std::optional<std::filesystem::path> {
+                return downloadFolder / name;
+            });
+        }
         initializeWindowing();
         ExampleWindow window(cooldown, allowPermissions, url, dataFolder);
         window.open();
@@ -185,6 +202,8 @@ int main(int argc, char** argv) {
                     if (const auto edge = edgeNamed(line.substr(7))) {
                         runOnUiThread([&window, edge] { window.beginResize(*edge); });
                     }
+                } else if (line == "download") {
+                    runOnUiThread([&window] { window.runScript(kDownloadScript); });
                 } else if (line == "probe") {
                     runOnUiThread([&window] { window.runScript(kProbeScript); });
                 } else if (line == "quit") {

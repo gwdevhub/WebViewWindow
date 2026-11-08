@@ -413,6 +413,27 @@ void WebViewWindow::notifyFrameChanged() {
     onFrameChanged();
 }
 
+namespace {
+
+DownloadChooser& downloadChooser() {
+    static DownloadChooser chooser;
+    return chooser;
+}
+
+}  // namespace
+
+void setDownloadChooser(DownloadChooser chooser) {
+    downloadChooser() = std::move(chooser);
+}
+
+std::optional<std::filesystem::path> chooseDownloadPath(const std::string& suggestedName) {
+    const DownloadChooser& chooser = downloadChooser();
+    if (!chooser) {
+        return std::nullopt;
+    }
+    return chooser(suggestedName);
+}
+
 std::optional<bool> WebViewWindow::decidePermission(PagePermission permission, const std::string& pageUrl) {
     return onPermissionRequest(permission, pageUrl);
 }
