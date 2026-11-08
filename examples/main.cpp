@@ -96,21 +96,17 @@ private:
 };
 
 // Reports the notification permission the page starts with, then asks for the microphone and for notifications. Each answer is the
-// error's name, or "granted" or "denied".
+// error's name, "granted" or "denied", or "pending" when nobody answered in five seconds.
 const char* const kProbeScript = R"JS(
 (async () => {
+  // A request that nobody answers stays open (WebView2 shows its prompt), so it's reported as pending after a few seconds.
+  const within = (promise) => Promise.race([
+    promise.then((value) => value, (e) => (e && e.name ? e.name : String(e))),
+    new Promise((resolve) => setTimeout(() => resolve('pending'), 5000)),
+  ]);
   const result = {notificationBefore: typeof Notification === 'undefined' ? 'none' : Notification.permission};
-  try {
-    await navigator.mediaDevices.getUserMedia({audio: true});
-    result.microphone = 'granted';
-  } catch (e) {
-    result.microphone = e && e.name ? e.name : String(e);
-  }
-  try {
-    result.notification = await Notification.requestPermission();
-  } catch (e) {
-    result.notification = e && e.name ? e.name : String(e);
-  }
+  result.microphone = await within(navigator.mediaDevices.getUserMedia({audio: true}).then(() => 'granted'));
+  result.notification = await within(Notification.requestPermission());
   (window.chrome && window.chrome.webview ? window.chrome.webview : window.webkit.messageHandlers.host)
     .postMessage(JSON.stringify({id: Date.now(), method: 'probe', args: [JSON.stringify(result)]}));
 })();
