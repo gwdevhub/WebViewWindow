@@ -25,6 +25,8 @@ The library is meant to be used as a submodule. The host application:
   opens the window again.
 - When the user closes a window, `allowClose` decides. If it returns true, the window is destroyed. A window that should stay
   reusable returns false and hides itself, as it would through `hide`.
+- `WindowOptions::resizeEdges` draws strips along the window's edges, after each page load, and a press on one starts a resize
+  from that edge. The page doesn't need to draw them. It applies when `resizable` is set and the window isn't autosize.
 
 ## Layout
 

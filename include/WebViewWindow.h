@@ -34,6 +34,9 @@ struct WindowOptions {
     bool titleBar = true;
     // Whether the page offers edges to resize the window from. An autosize window never has them.
     bool resizable = true;
+    // Whether the library draws strips along the window's edges, which start a resize from that edge when pressed. The page draws
+    // none itself, so a frameless window that should resize sets this. It applies only when resizable is set and autosize isn't.
+    bool resizeEdges = false;
     bool skipTaskbar = false;
     bool alwaysOnTop = false;
     bool visible = true;

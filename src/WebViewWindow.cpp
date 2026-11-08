@@ -12,6 +12,54 @@ namespace {
 
 int uiScale = 100;
 
+// The edge a strip names, as the script posts it, or nothing when the name isn't one.
+std::optional<ResizeEdge> resizeEdgeNamed(const std::string& name) {
+    if (name == "n") return ResizeEdge::North;
+    if (name == "ne") return ResizeEdge::NorthEast;
+    if (name == "e") return ResizeEdge::East;
+    if (name == "se") return ResizeEdge::SouthEast;
+    if (name == "s") return ResizeEdge::South;
+    if (name == "sw") return ResizeEdge::SouthWest;
+    if (name == "w") return ResizeEdge::West;
+    if (name == "nw") return ResizeEdge::NorthWest;
+    return std::nullopt;
+}
+
+// Puts a strip along each edge of the page. Each one posts beginResize with its edge, through the channel the platform gives the
+// page. Where there's no channel, it does nothing.
+const char* resizeEdgesScript() {
+    return R"JS((() => {
+  if (document.getElementById('webview-window-edges')) return;
+  const channel = window.chrome && window.chrome.webview ? window.chrome.webview
+    : window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.host ? window.webkit.messageHandlers.host
+    : null;
+  if (!channel) return;
+  const edges = [
+    ['nw', 'nw-resize', 'top: 0; left: 0; width: 8px; height: 8px'],
+    ['n', 'n-resize', 'top: 0; left: 8px; right: 8px; height: 5px'],
+    ['ne', 'ne-resize', 'top: 0; right: 0; width: 8px; height: 8px'],
+    ['w', 'w-resize', 'top: 8px; bottom: 8px; left: 0; width: 5px'],
+    ['e', 'e-resize', 'top: 8px; bottom: 8px; right: 0; width: 5px'],
+    ['sw', 'sw-resize', 'bottom: 0; left: 0; width: 8px; height: 8px'],
+    ['s', 's-resize', 'bottom: 0; left: 8px; right: 8px; height: 5px'],
+    ['se', 'se-resize', 'bottom: 0; right: 0; width: 8px; height: 8px'],
+  ];
+  const holder = document.createElement('div');
+  holder.id = 'webview-window-edges';
+  for (const [name, cursor, place] of edges) {
+    const strip = document.createElement('div');
+    strip.setAttribute('style', `position: fixed; z-index: 2147483647; cursor: ${cursor}; ${place}`);
+    strip.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      channel.postMessage(JSON.stringify({ id: 0, method: 'beginResize', args: [name] }));
+    });
+    holder.appendChild(strip);
+  }
+  document.body.appendChild(holder);
+})();)JS";
+}
+
 // The rectangle moved the least it takes to lie inside area. One larger than the area sits at the area's top left.
 ScreenRect keptWithin(ScreenRect rect, const ScreenRect& area) {
     rect.x = std::max(area.x, std::min(rect.x, area.right() - rect.width));
@@ -52,6 +100,15 @@ void reportFatalError(const std::string& message) {
 WebViewWindow::WebViewWindow(WindowOptions options)
     : options_(std::move(options)), baseWidth_(options_.width), baseHeight_(options_.height) {
     liveWindows().insert(this);
+    // The strips that resizeEdges draws post here. A request from a window without them is ignored.
+    handler_.on("beginResize", [](WebViewWindow& window, const Json& args, const Reply&) {
+        if (!window.options_.resizeEdges || args.size() != 1 || !args[0].is_string()) {
+            return;
+        }
+        if (const auto edge = resizeEdgeNamed(args[0].get<std::string>())) {
+            window.beginResize(*edge);
+        }
+    });
 }
 
 WebViewWindow::~WebViewWindow() {
@@ -357,6 +414,9 @@ void WebViewWindow::notifyFrameChanged() {
 }
 
 void WebViewWindow::notifyPageLoaded() {
+    if (options_.resizeEdges && options_.resizable && !options_.autosize) {
+        platformRunScript(resizeEdgesScript());
+    }
     onPageLoaded();
 }
 
