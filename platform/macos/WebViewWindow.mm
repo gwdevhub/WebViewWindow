@@ -97,6 +97,10 @@ void initializeWindowing() {
 
 void setApplicationIcon(const std::string&) {}  // TODO: NSApp.applicationIconImage from the PNG bytes.
 
+// TODO: NSStatusItem tray icon. Until then, hosts fall back to their own behaviour.
+bool showTrayIcon(const std::string&, std::function<void()>, std::vector<TrayMenuItem>) { return false; }
+void removeTrayIcon() {}
+
 void runEventLoop() {
     [NSApp run];
 }

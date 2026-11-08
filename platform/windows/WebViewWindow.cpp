@@ -988,7 +988,12 @@ void offerLink(const std::string& message, const std::string& link) {
 }
 
 // Windows takes each window's icon from the executable's resource, so there's nothing to set here.
+// TODO: embed the application icon as an .ico resource in the Windows build, so the taskbar shows it.
 void setApplicationIcon(const std::string&) {}
+
+// TODO: Shell_NotifyIconW tray icon with a hidden message window. Until then, hosts fall back to their own behaviour.
+bool showTrayIcon(const std::string&, std::function<void()>, std::vector<TrayMenuItem>) { return false; }
+void removeTrayIcon() {}
 
 namespace {
 void initializeTaskWindow();

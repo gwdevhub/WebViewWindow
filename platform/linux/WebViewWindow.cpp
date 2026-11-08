@@ -32,6 +32,10 @@ struct NativeWindow {
     bool pageLoaded = false;
     bool wantsVisible = false;
     bool wantsFocus = false;
+    // The window's position when it was last hidden. GTK centres a toplevel again each time it's shown, so it's put back on show.
+    bool hasHiddenPosition = false;
+    int hiddenX = 0;
+    int hiddenY = 0;
     // Whether a window dropped after a move or resize is kept inside its monitor's work area.
     bool confined = true;
     // The window this belongs to, which the load events report to.
@@ -118,6 +122,14 @@ struct GtkApi {
     void (*web_inspector_show)(WebKitWebInspector*) = nullptr;
     gulong (*g_signal_connect_data)(gpointer, const gchar*, GCallback, gpointer, GClosureNotify, GConnectFlags) = nullptr;
     void (*g_free)(gpointer) = nullptr;
+    void* (*status_icon_new_from_pixbuf)(GdkPixbuf*) = nullptr;
+    void (*status_icon_set_tooltip_text)(void*, const gchar*) = nullptr;
+    void (*status_icon_set_visible)(void*, gboolean) = nullptr;
+    void (*status_icon_position_menu)(GtkWidget*, gint*, gint*, gboolean*, gpointer) = nullptr;
+    GtkWidget* (*menu_new)() = nullptr;
+    GtkWidget* (*menu_item_new_with_label)(const gchar*) = nullptr;
+    void (*menu_shell_append)(GtkMenuShell*, GtkWidget*) = nullptr;
+    void (*menu_popup)(GtkWidget*, GtkWidget*, GtkWidget*, void*, gpointer, guint, guint32) = nullptr;
     char* (*jsc_value_to_string)(JSCValue*) = nullptr;
 };
 
@@ -206,6 +218,14 @@ GtkApi loadApi() {
     bind(api.web_inspector_show, library, "webkit_web_inspector_show");
     bind(api.g_signal_connect_data, library, "g_signal_connect_data");
     bind(api.g_free, library, "g_free");
+    bind(api.status_icon_new_from_pixbuf, library, "gtk_status_icon_new_from_pixbuf");
+    bind(api.status_icon_set_tooltip_text, library, "gtk_status_icon_set_tooltip_text");
+    bind(api.status_icon_set_visible, library, "gtk_status_icon_set_visible");
+    bind(api.status_icon_position_menu, library, "gtk_status_icon_position_menu");
+    bind(api.menu_new, library, "gtk_menu_new");
+    bind(api.menu_item_new_with_label, library, "gtk_menu_item_new_with_label");
+    bind(api.menu_shell_append, library, "gtk_menu_shell_append");
+    bind(api.menu_popup, library, "gtk_menu_popup");
     bind(api.jsc_value_to_string, library, "jsc_value_to_string");
     return api;
 }
@@ -669,8 +689,17 @@ void WebViewWindow::platformShow(bool visible) {
         return;
     }
     if (visible) {
+        // Moved before the window is shown: a window manager can place a window that's moved after it maps.
+        if (native_->hasHiddenPosition) {
+            api().window_move(reinterpret_cast<GtkWindow*>(native_->window), native_->hiddenX, native_->hiddenY);
+            native_->hasHiddenPosition = false;
+        }
         api().widget_show_all(native_->window);
     } else {
+        const ScreenRect frame = frameOf(native_->window);
+        native_->hiddenX = frame.x;
+        native_->hiddenY = frame.y;
+        native_->hasHiddenPosition = true;
         api().widget_hide(native_->window);
     }
 }
@@ -822,6 +851,78 @@ void setApplicationIcon(const std::string& png) {
         }
         applicationIcon = scaled;
     }
+}
+
+namespace {
+
+// The tray icon and its menu. Its callbacks run on the GTK thread, which is the event loop's thread.
+struct TrayState {
+    void* icon = nullptr;
+    GtkWidget* menu = nullptr;
+    std::function<void()> onActivate;
+    std::vector<std::unique_ptr<std::function<void()>>> actions;
+};
+
+std::unique_ptr<TrayState> trayState;
+
+void onTrayActivate(void*, gpointer) {
+    if (trayState && trayState->onActivate) {
+        trayState->onActivate();
+    }
+}
+
+void onTrayPopupMenu(void*, guint button, guint time, gpointer) {
+    if (!trayState || !trayState->menu) {
+        return;
+    }
+    api().widget_show_all(trayState->menu);
+    api().menu_popup(trayState->menu, nullptr, nullptr, reinterpret_cast<void*>(api().status_icon_position_menu),
+                     trayState->icon, button, time);
+}
+
+void onMenuItemActivate(void*, gpointer action) {
+    auto* run = static_cast<std::function<void()>*>(action);
+    if (run && *run) {
+        (*run)();
+    }
+}
+
+}  // namespace
+
+bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu) {
+    ensureGtk();
+    if (!applicationIcon) {
+        return false;
+    }
+    removeTrayIcon();
+    auto state = std::make_unique<TrayState>();
+    state->onActivate = std::move(onActivate);
+    state->menu = api().menu_new();
+    for (auto& entry : menu) {
+        auto action = std::make_unique<std::function<void()>>(std::move(entry.action));
+        GtkWidget* item = api().menu_item_new_with_label(entry.label.c_str());
+        api().g_signal_connect_data(item, "activate", reinterpret_cast<GCallback>(onMenuItemActivate), action.get(), nullptr, static_cast<GConnectFlags>(0));
+        api().menu_shell_append(reinterpret_cast<GtkMenuShell*>(state->menu), item);
+        state->actions.push_back(std::move(action));
+    }
+    state->icon = api().status_icon_new_from_pixbuf(applicationIcon);
+    api().status_icon_set_tooltip_text(state->icon, tooltip.c_str());
+    api().g_signal_connect_data(state->icon, "activate", reinterpret_cast<GCallback>(onTrayActivate), nullptr, nullptr, static_cast<GConnectFlags>(0));
+    api().g_signal_connect_data(state->icon, "popup-menu", reinterpret_cast<GCallback>(onTrayPopupMenu), nullptr, nullptr, static_cast<GConnectFlags>(0));
+    api().status_icon_set_visible(state->icon, TRUE);
+    trayState = std::move(state);
+    return true;
+}
+
+void removeTrayIcon() {
+    if (!trayState) {
+        return;
+    }
+    api().status_icon_set_visible(trayState->icon, FALSE);
+    if (trayState->menu) {
+        api().widget_destroy(trayState->menu);
+    }
+    trayState.reset();
 }
 
 void runEventLoop() {

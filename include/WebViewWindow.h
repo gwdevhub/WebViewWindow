@@ -267,6 +267,18 @@ const std::string& applicationName();
 // instead, so there it does nothing.
 void setApplicationIcon(const std::string& png);
 
+// An entry in the system tray icon's menu. Its action runs on the event loop's thread.
+struct TrayMenuItem {
+    std::string label;
+    std::function<void()> action;
+};
+
+// Shows the application icon in the system tray. Clicking the icon runs onActivate, and the menu opens on a right click. Returns
+// false when the platform has no tray icon yet, or setApplicationIcon hasn't been called, so the host can fall back to its own
+// behaviour. The icon stays until removeTrayIcon is called.
+bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
+void removeTrayIcon();
+
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but
 // they aren't part of the window.
 
