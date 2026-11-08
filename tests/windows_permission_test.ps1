@@ -35,9 +35,13 @@ $server = Start-Process -FilePath $python.Source -ArgumentList @("-m", "http.ser
 Start-Sleep -Seconds 1
 $url = "http://localhost:$port/probe.html"
 
-# Starts the example with the options, asks it to probe the page, and returns the probe's line, or nothing when it didn't report.
+# Starts the example with the options and a profile folder of its own, asks it to probe the page, and returns the probe's line, or
+# nothing when it didn't report. Each run gets a new profile, so a permission one run decides can't carry into the next.
+$script:runs = 0
 function Invoke-Probe([string[]]$options) {
-    Start-Example -BuildDir $BuildDir -Arguments (@("--url", $url) + $options)
+    $script:runs++
+    $profile = Join-Path $script:work "profile-$($script:runs)"
+    Start-Example -BuildDir $BuildDir -Arguments (@("--url", $url, "--data-folder", $profile) + $options)
     if (-not (Wait-ForLineAfter 0 '^loaded$')) {
         Fail "the page never loaded"
         Stop-Example
@@ -56,18 +60,29 @@ function Invoke-Probe([string[]]$options) {
     return $line
 }
 
+# The microphone is only asked for when the machine has one: without a device, the request fails before any permission is asked.
+function Test-MicrophoneCheck([string]$line, [string]$label, [scriptblock]$check) {
+    if ($line -match '"microphone":"NotFoundError"') {
+        Write-Host "SKIP: $label. This machine has no microphone, so the request fails before it's asked."
+        return
+    }
+    if ($line -and (& $check)) {
+        Pass $label
+    } else {
+        Fail "$label, but the probe said: $line"
+    }
+}
+
 try {
-    # 1. No host answer: notifications aren't granted, and the microphone is neither granted nor refused by the host.
+    # 1. No host answer: notifications aren't granted, and a microphone request isn't granted.
     $line = Invoke-Probe @()
     if ($line -and $line -notmatch '"notificationBefore":"granted"') {
         Pass "without a host answer, notifications aren't granted"
     } else {
         Fail "without a host answer, notifications were granted or unknown: $line"
     }
-    if ($line -and $line -match '"microphone":"(NotAllowedError|pending)"') {
-        Pass "without a host answer, the microphone request is refused or left to WebView2's prompt"
-    } else {
-        Fail "without a host answer, the microphone request was granted or unknown: $line"
+    Test-MicrophoneCheck $line "without a host answer, the microphone request is refused or left to WebView2's prompt" {
+        $line -match '"microphone":"(NotAllowedError|pending)"'
     }
 
     # 2. The host allows: notifications are granted for the page's origin, and the microphone isn't refused.
@@ -77,10 +92,8 @@ try {
     } else {
         Fail "with --allow-permissions, notifications weren't granted: $line"
     }
-    if ($line -and $line -notmatch '"microphone":"(NotAllowedError|pending)"') {
-        Pass "with --allow-permissions, the microphone request isn't refused"
-    } else {
-        Fail "with --allow-permissions, the microphone request was refused or left pending: $line"
+    Test-MicrophoneCheck $line "with --allow-permissions, the microphone request isn't refused" {
+        $line -notmatch '"microphone":"(NotAllowedError|pending)"'
     }
 } finally {
     if ($server -and -not $server.HasExited) {

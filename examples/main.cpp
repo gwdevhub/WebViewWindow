@@ -7,8 +7,8 @@
 //   probe: the page asks for the microphone and for notifications, and the result is reported as "probe {json}": the
 //          notification permission before the request, the microphone request's result, and the notification request's result
 //   quit: the event loop stops
-// Options: --cooldown-ms N, --allow-permissions, and --url <address> to show a page other than the built-in one. A page at --url
-// must report ready itself, as the built-in page does.
+// Options: --cooldown-ms N, --allow-permissions, --url <address> to show a page other than the built-in one, and --data-folder <path>
+// for the folder WebView2 keeps its profile in. A page at --url must report ready itself, as the built-in page does.
 // With --allow-permissions, the host allows the microphone, camera and notification requests. Without it, they're left to the
 // platform's default.
 // The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height> area=<x>,<y>,<width>,<height>". The frame is the
@@ -16,6 +16,7 @@
 // monitor the window is on, or "area=none".
 
 #include <chrono>
+#include <filesystem>
 #include <cstdio>
 #include <exception>
 #include <iostream>
@@ -29,8 +30,8 @@ namespace {
 
 class ExampleWindow : public WebViewWindow {
 public:
-    ExampleWindow(std::chrono::milliseconds cooldown, bool allowPermissions, std::string url)
-        : WebViewWindow(options(cooldown)), allowPermissions_(allowPermissions), url_(std::move(url)) {
+    ExampleWindow(std::chrono::milliseconds cooldown, bool allowPermissions, std::string url, std::filesystem::path dataFolder)
+        : WebViewWindow(options(cooldown, std::move(dataFolder))), allowPermissions_(allowPermissions), url_(std::move(url)) {
         handler().on("probe", [](WebViewWindow&, const Json& args, const Reply& reply) {
             std::printf("probe %s\n", args.at(0).get<std::string>().c_str());
             std::fflush(stdout);
@@ -97,9 +98,10 @@ private:
     bool allowPermissions_;
     std::string url_;
 
-    static WindowOptions options(std::chrono::milliseconds cooldown) {
+    static WindowOptions options(std::chrono::milliseconds cooldown, std::filesystem::path dataFolder) {
         WindowOptions options;
         options.cooldown = cooldown;
+        options.webViewDataFolder = std::move(dataFolder);
         options.title = "WebViewWindow Example";
         options.width = 320;
         options.height = 160;
@@ -144,6 +146,7 @@ int main(int argc, char** argv) {
     std::chrono::milliseconds cooldown = std::chrono::minutes(2);
     bool allowPermissions = false;
     std::string url;
+    std::filesystem::path dataFolder;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--cooldown-ms" && i + 1 < argc) {
@@ -152,12 +155,14 @@ int main(int argc, char** argv) {
             allowPermissions = true;
         } else if (arg == "--url" && i + 1 < argc) {
             url = argv[++i];
+        } else if (arg == "--data-folder" && i + 1 < argc) {
+            dataFolder = argv[++i];
         }
     }
     try {
         setApplicationName("WebViewWindow Example");
         initializeWindowing();
-        ExampleWindow window(cooldown, allowPermissions, url);
+        ExampleWindow window(cooldown, allowPermissions, url, dataFolder);
         window.open();
 
         std::thread reader([&window] {
