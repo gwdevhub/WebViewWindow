@@ -4,6 +4,7 @@
 //   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
 //   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
+//   notify: the page shows a notification through its Notification API
 //   download: the page clicks its first link with a download attribute, and the file is saved to the download folder
 //   probe: the page asks for the microphone and for notifications, and the result is reported as "probe {json}": the
 //          notification permission before the request, the microphone request's result, and the notification request's result
@@ -110,6 +111,13 @@ private:
     }
 };
 
+// Shows a notification through the page's Notification API, which the host allowed with --allow-permissions.
+const char* const kNotifyScript = R"JS(
+(() => {
+  new Notification('WebViewWindow test', {body: 'Shown by the page'});
+})();
+)JS";
+
 // Clicks the page's first link that has a download attribute. The click starts the download, which the chooser places.
 const char* const kDownloadScript = R"JS(
 (() => {
@@ -202,6 +210,8 @@ int main(int argc, char** argv) {
                     if (const auto edge = edgeNamed(line.substr(7))) {
                         runOnUiThread([&window, edge] { window.beginResize(*edge); });
                     }
+                } else if (line == "notify") {
+                    runOnUiThread([&window] { window.runScript(kNotifyScript); });
                 } else if (line == "download") {
                     runOnUiThread([&window] { window.runScript(kDownloadScript); });
                 } else if (line == "probe") {
