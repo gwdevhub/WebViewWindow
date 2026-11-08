@@ -29,7 +29,8 @@ struct NativeWindow {
     // Whether the library moves the window as it is dragged, rather than the window manager.
     bool manual = false;
     // The window stays hidden until its page has loaded, so it never shows as an empty frame.
-    bool pageLoaded = false;
+    // The window stays hidden until its page reports that it's ready, so it never shows an empty or half-drawn page.
+    bool pageReady = false;
     bool wantsVisible = false;
     bool wantsFocus = false;
     // The window's position when it was last hidden. GTK centres a toplevel again each time it's shown, so it's put back on show.
@@ -257,10 +258,9 @@ guint32 serverTime(GtkWidget* widget) {
     return gdkWindow ? api().x11_server_time(gdkWindow) : GDK_CURRENT_TIME;
 }
 
-// Shows the window once its page has loaded, if it's wanted yet. Focus goes to it only if it was asked for.
-void showLoadedPage(NativeWindow* native) {
-    native->pageLoaded = true;
-    if (!native->window || !native->wantsVisible) {
+// Shows the window once its page has reported ready, if it's wanted yet. Focus goes to it only if it was asked for.
+void showReadyPage(NativeWindow* native) {
+    if (!native->window || !native->wantsVisible || !native->pageReady) {
         return;
     }
     api().widget_show_all(native->window);
@@ -273,7 +273,6 @@ void showLoadedPage(NativeWindow* native) {
 void onLoadChanged(WebKitWebView*, WebKitLoadEvent event, gpointer data) {
     auto* native = static_cast<NativeWindow*>(data);
     if (event == WEBKIT_LOAD_FINISHED) {
-        showLoadedPage(native);
         if (native->owner) {
             native->owner->notifyPageLoaded();
         }
@@ -435,7 +434,7 @@ void WebViewWindow::platformPresent() {
         return;
     }
     native_->wantsVisible = true;
-    if (!native_->pageLoaded) {
+    if (!native_->pageReady) {
         native_->wantsFocus = true;
         return;
     }
@@ -685,7 +684,7 @@ void WebViewWindow::platformShow(bool visible) {
         return;
     }
     native_->wantsVisible = visible;
-    if (!native_->pageLoaded) {
+    if (!native_->pageReady) {
         return;
     }
     if (visible) {
@@ -775,7 +774,13 @@ void WebViewWindow::platformOpenDevTools() {
 }
 
 // WebKitGTK shows the window when its page has loaded, so a ready page has nothing more to do here.
-void WebViewWindow::platformPageReady() {}
+void WebViewWindow::platformPageReady() {
+    if (!native_) {
+        return;
+    }
+    native_->pageReady = true;
+    showReadyPage(native_.get());
+}
 
 void WebViewWindow::platformRunScript(const std::string& script) {
     if (native_ && native_->view) {
