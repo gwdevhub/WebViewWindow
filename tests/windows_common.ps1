@@ -211,8 +211,8 @@ function Get-LineCount {
 }
 
 # Waits until the output has a line matching the pattern after the first <before> lines.
-function Wait-ForLineAfter([int]$before, [string]$pattern) {
-    for ($i = 0; $i -lt 100; $i++) {
+function Wait-ForLineAfter([int]$before, [string]$pattern, [int]$seconds = 10) {
+    for ($i = 0; $i -lt ($seconds * 10); $i++) {
         $matching = @(Get-OutputLines | Select-Object -Skip $before | Where-Object { $_ -match $pattern })
         if ($matching.Count -gt 0) {
             return $true
