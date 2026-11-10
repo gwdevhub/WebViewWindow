@@ -169,11 +169,11 @@ void applyBehavior(WVWindow* window, bool skipTaskbar, bool sticky) {
 void activateApplication() {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    // On macOS 14 and later, activate alone can leave the app behind the one that started it, so the older call is made too.
     if (@available(macOS 14.0, *)) {
         [NSApp activate];
-    } else {
-        [NSApp activateIgnoringOtherApps:YES];
     }
+    [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
 }
 
@@ -721,7 +721,13 @@ void WebViewWindow::platformShow(bool visible) {
         return;
     }
     if (visible) {
-        [native_->window orderFront:nil];
+        // The first showing activates the app, as the page-ready path does, so a window shown later still comes to the front.
+        if (!native_->shownOnce) {
+            native_->shownOnce = true;
+            bringToFront(native_.get());
+        } else {
+            [native_->window orderFront:nil];
+        }
     } else {
         [native_->window orderOut:nil];
     }
