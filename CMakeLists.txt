@@ -37,6 +37,8 @@ elseif(APPLE)
     enable_language(OBJCXX)
     find_package(Threads REQUIRED)
     target_sources(webview_window PRIVATE platform/macos/WebViewWindow.mm)
+    # The window's Objective-C objects are managed by ARC, so the C++ state that holds them is released with it.
+    set_source_files_properties(platform/macos/WebViewWindow.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(webview_window PUBLIC "-framework AppKit" "-framework WebKit" Threads::Threads)
 else()
     find_package(Threads REQUIRED)
