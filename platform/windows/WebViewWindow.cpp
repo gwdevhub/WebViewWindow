@@ -814,6 +814,9 @@ void WebViewWindow::platformMinimize() {
     }
 }
 
+// Full screen is not implemented on this platform yet; the macOS backend has it.
+void WebViewWindow::platformSetFullscreen(bool) {}
+
 void WebViewWindow::platformToggleMaximize() {
     if (native_ && native_->hwnd) {
         ShowWindow(native_->hwnd, IsZoomed(native_->hwnd) ? SW_RESTORE : SW_MAXIMIZE);

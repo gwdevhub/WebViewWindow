@@ -155,7 +155,8 @@ NSWindowLevel levelFor(const WindowOptions& options) {
 // Keeps the window off the Cmd-Tab cycle and out of the Window menu when it's skipping the taskbar, and keeps it on every space when
 // it's sticky. macOS has no taskbar button for a single window, so this is the closest it gets.
 void applyBehavior(WVWindow* window, bool skipTaskbar, bool sticky) {
-    NSWindowCollectionBehavior behavior = NSWindowCollectionBehaviorDefault;
+    // FullScreenPrimary lets the window enter macOS's full screen, which setFullscreen asks for.
+    NSWindowCollectionBehavior behavior = NSWindowCollectionBehaviorFullScreenPrimary;
     if (sticky) {
         behavior |= NSWindowCollectionBehaviorCanJoinAllSpaces;
     }
@@ -654,7 +655,8 @@ void WebViewWindow::platformOpen() {
     }
 
     WVWindow* window = [[WVWindow alloc] initWithContentRect:toCocoa(frame)
-                                                   styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable
+                                                   styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable |
+                                                             (options_.resizable ? NSWindowStyleMaskResizable : 0)
                                                      backing:NSBackingStoreBuffered
                                                        defer:NO];
     // Utility is a no-op here, as the header says: AppKit drops the utility window style on a borderless panel, and every window is
@@ -803,6 +805,18 @@ void WebViewWindow::platformBeginResize(ResizeEdge edge) {
 void WebViewWindow::platformMinimize() {
     if (native_ && native_->window) {
         [native_->window miniaturize:nil];
+    }
+}
+
+// Enters or leaves macOS full screen, which moves the window to its own Space and covers the menu bar. Borderless windows get it
+// through the full-screen collection behaviour set when they are created.
+void WebViewWindow::platformSetFullscreen(bool fullscreen) {
+    if (!native_ || !native_->window) {
+        return;
+    }
+    const bool current = (native_->window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    if (current != fullscreen) {
+        [native_->window toggleFullScreen:nil];
     }
 }
 
