@@ -326,6 +326,10 @@ void WebViewWindow::toggleMaximize() {
     platformToggleMaximize();
 }
 
+void WebViewWindow::setFullscreen(bool fullscreen) {
+    platformSetFullscreen(fullscreen);
+}
+
 void WebViewWindow::close() {
     platformClose();
 }

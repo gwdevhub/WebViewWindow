@@ -789,6 +789,9 @@ void WebViewWindow::platformMinimize() {
     }
 }
 
+// Full screen is not implemented on this platform yet; the macOS backend has it.
+void WebViewWindow::platformSetFullscreen(bool) {}
+
 void WebViewWindow::platformToggleMaximize() {
     if (native_ && native_->window) {
         auto* window = reinterpret_cast<GtkWindow*>(native_->window);

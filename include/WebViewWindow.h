@@ -126,6 +126,8 @@ public:
     void beginResize(ResizeEdge edge);
     void minimize();
     void toggleMaximize();
+    // Enters or leaves full screen: on macOS the window takes its own Space and covers the menu bar.
+    void setFullscreen(bool fullscreen);
     // Asks the window to close, as the window manager's close would: allowClose decides.
     void close();
     // Keeps the web view of a hidden window past its cooldown, until the window is shown or presented again.
@@ -201,6 +203,7 @@ private:
     void platformBeginResize(ResizeEdge edge);
     void platformMinimize();
     void platformToggleMaximize();
+    void platformSetFullscreen(bool fullscreen);
     void platformClose();
     void platformRunScript(const std::string& script);
     // The page reported that it's ready: the window is shown, and host events can reach the page.
