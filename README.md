@@ -43,7 +43,7 @@ The library is meant to be used as a submodule. The host application:
 - `src/`: the parts shared by both platforms.
 - `platform/windows/`: the Win32 window, WebView2 callbacks, and DirectComposition for see-through windows.
 - `platform/linux/`: the GTK and WebKitGTK window. GTK is loaded at runtime, so only the headers in `third_party/gtk` are needed.
-- `platform/macos/`: the AppKit and WebKit window, in Objective-C++. A skeleton for now; see Status.
+- `platform/macos/`: the AppKit and WebKit window, in Objective-C++. See Status.
 - `third_party/`: WebView2 headers and loader, GTK headers, and nlohmann/json.
 
 ## Build
@@ -58,5 +58,6 @@ when the library is used as a submodule. The WebView2 runtime must be installed 
 
 - Windows: built and run with the example. The permission hook compiles with MinGW but hasn't been run on Windows yet.
 - Linux: built and run with the example. `tests/linux_example_test.sh` and `tests/linux_permission_test.sh` check it.
-- macOS: in progress. `platform/macos/` builds and links, but the window and web view are still stubs, so the example
-  doesn't show a window yet. A GitHub Actions workflow (`.github/workflows/macos.yml`) builds it on a macOS runner.
+- macOS: the window, its WKWebView, and the example's features are implemented in `platform/macos/`. The
+  `.github/workflows/macos.yml` workflow builds the library and example on a macOS runner. The `tests/macos_*.sh` scripts check the
+  window's behaviour on a Mac; CI only builds them.
