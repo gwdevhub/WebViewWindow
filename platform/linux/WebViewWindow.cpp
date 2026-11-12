@@ -89,6 +89,8 @@ struct GtkApi {
     void (*window_maximize)(GtkWindow*) = nullptr;
     void (*window_unmaximize)(GtkWindow*) = nullptr;
     gboolean (*window_is_maximized)(GtkWindow*) = nullptr;
+    void (*window_fullscreen)(GtkWindow*) = nullptr;
+    void (*window_unfullscreen)(GtkWindow*) = nullptr;
     void (*window_close)(GtkWindow*) = nullptr;
     void (*widget_hide)(GtkWidget*) = nullptr;
     void (*widget_destroy)(GtkWidget*) = nullptr;
@@ -200,6 +202,8 @@ GtkApi loadApi() {
     bind(api.window_maximize, library, "gtk_window_maximize");
     bind(api.window_unmaximize, library, "gtk_window_unmaximize");
     bind(api.window_is_maximized, library, "gtk_window_is_maximized");
+    bind(api.window_fullscreen, library, "gtk_window_fullscreen");
+    bind(api.window_unfullscreen, library, "gtk_window_unfullscreen");
     bind(api.window_close, library, "gtk_window_close");
     bind(api.window_stick, library, "gtk_window_stick");
     bind(api.window_set_keep_below, library, "gtk_window_set_keep_below");
@@ -789,8 +793,13 @@ void WebViewWindow::platformMinimize() {
     }
 }
 
-// Full screen is not implemented on this platform yet; the macOS backend has it.
-void WebViewWindow::platformSetFullscreen(bool) {}
+void WebViewWindow::platformSetFullscreen(bool fullscreen) {
+    if (native_ && native_->window) {
+        auto* window = reinterpret_cast<GtkWindow*>(native_->window);
+        if (fullscreen) api().window_fullscreen(window);
+        else api().window_unfullscreen(window);
+    }
+}
 
 void WebViewWindow::platformToggleMaximize() {
     if (native_ && native_->window) {
