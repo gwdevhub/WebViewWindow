@@ -82,6 +82,11 @@ struct GtkApi {
     void (*widget_show)(GtkWidget*) = nullptr;
     void (*widget_show_all)(GtkWidget*) = nullptr;
     GdkWindow* (*widget_get_window)(GtkWidget*) = nullptr;
+    void (*widget_realize)(GtkWidget*) = nullptr;
+    // The input shape takes a cairo region, which the cairo library makes. Both come from the libraries opened at start.
+    void (*widget_input_shape_combine_region)(GtkWidget*, void*) = nullptr;
+    void* (*cairo_region_create)() = nullptr;
+    void (*cairo_region_destroy)(void*) = nullptr;
     guint32 (*x11_server_time)(GdkWindow*) = nullptr;
     void (*window_begin_resize_drag)(GtkWindow*, GdkWindowEdge, gint, gint, gint, guint32) = nullptr;
     void (*window_begin_move_drag)(GtkWindow*, gint, gint, gint, guint32) = nullptr;
@@ -214,6 +219,13 @@ GtkApi loadApi() {
     bind(api.widget_show, library, "gtk_widget_show");
     bind(api.widget_show_all, library, "gtk_widget_show_all");
     bind(api.widget_get_window, library, "gtk_widget_get_window");
+    bind(api.widget_realize, library, "gtk_widget_realize");
+    bind(api.widget_input_shape_combine_region, library, "gtk_widget_input_shape_combine_region");
+    // Cairo is the library GTK draws with, so it's there whenever GTK is. It's opened here for the one region the input shape needs.
+    if (void* cairo = dlopen("libcairo.so.2", RTLD_LAZY | RTLD_LOCAL)) {
+        bind(api.cairo_region_create, cairo, "cairo_region_create");
+        bind(api.cairo_region_destroy, cairo, "cairo_region_destroy");
+    }
     // Only on X11. Without it the focus request carries no time, and the window manager may refuse it.
     api.x11_server_time = reinterpret_cast<decltype(api.x11_server_time)>(dlsym(library, "gdk_x11_get_server_time"));
     bind(api.widget_hide, library, "gtk_widget_hide");
@@ -512,6 +524,14 @@ void WebViewWindow::platformOpen() {
     if (options_.transparent) {
         const RgbaColor clear{0, 0, 0, 0};
         gtk.web_view_set_background_color(native.view, &clear);
+    }
+    if (options_.clickThrough && gtk.cairo_region_create) {
+        // An empty input shape means the window takes no pointer input, so clicks reach whatever is beneath it. The shape is set once
+        // the widget is realized, and GTK copies the region, so it's released straight after.
+        gtk.widget_realize(native.window);
+        void* empty = gtk.cairo_region_create();
+        gtk.widget_input_shape_combine_region(native.window, empty);
+        gtk.cairo_region_destroy(empty);
     }
     gtk.container_add(reinterpret_cast<GtkContainer*>(native.window), reinterpret_cast<GtkWidget*>(native.view));
     gtk.g_signal_connect_data(native.view, "web-process-crashed", reinterpret_cast<GCallback>(onWebProcessCrashed), this,

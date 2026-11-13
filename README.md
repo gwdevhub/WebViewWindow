@@ -27,6 +27,8 @@ The library is meant to be used as a submodule. The host application:
   reusable returns false and hides itself, as it would through `hide`.
 - `WindowOptions::resizeEdges` draws strips along the window's edges, after each page load, and a press on one starts a resize
   from that edge. The page doesn't need to draw them. It applies when `resizable` is set and the window isn't autosize.
+- `WindowOptions::clickThrough` makes the window pass mouse clicks to whatever is beneath it, so the page gets no pointer input.
+  It's fixed when the window opens. On Windows it sets `WS_EX_TRANSPARENT`; on Linux it sets an empty input shape on the GTK window.
 
 ## Permissions
 
@@ -56,8 +58,10 @@ when the library is used as a submodule. The WebView2 runtime must be installed 
 
 ## Status
 
-- Windows: built and run with the example. The permission hook compiles with MinGW but hasn't been run on Windows yet.
-- Linux: built and run with the example. `tests/linux_example_test.sh` and `tests/linux_permission_test.sh` check it.
+- Windows: built and run with the example. The permission hook compiles with MinGW but hasn't been run on Windows yet. The
+  click-through test (`tests/windows_click_through_test.ps1`) is in `.github/workflows/windows-permissions.yml`; it hasn't run yet.
+- Linux: built and run with the example. `tests/linux_example_test.sh`, `tests/linux_permission_test.sh` and
+  `tests/linux_click_through_test.sh` check it. The click-through test passes on X11.
 - macOS: the window, its WKWebView, and the example's features are implemented in `platform/macos/`. The
   `.github/workflows/macos.yml` workflow builds the library and example on a macOS runner. The `tests/macos_*.sh` scripts check the
   window's behaviour on a Mac; CI only builds them.
