@@ -60,6 +60,9 @@ struct WindowOptions {
     // The window's background is see-through, where the platform can show the desktop through it. Nothing is drawn behind the
     // page, so the page fills whatever it wants drawn.
     bool transparent = true;
+    // The window never takes mouse clicks: they pass through to whatever is beneath it. The page gets no input. It's fixed when the
+    // window opens, so it suits an overlay that's only ever seen, not used.
+    bool clickThrough = false;
     // The page's hardware acceleration policy. Unset leaves WebKit's default in place.
     std::optional<HardwareAcceleration> hardwareAcceleration;
     // The folder WebView2 keeps its profile and caches in. Empty means a folder beside the executable.

@@ -36,3 +36,7 @@ jobs:
       - name: Run the download test
         shell: pwsh
         run: ./tests/windows_download_test.ps1 -BuildDir build
+
+      - name: Run the click-through test
+        shell: pwsh
+        run: ./tests/windows_click_through_test.ps1 -BuildDir build

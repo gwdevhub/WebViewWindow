@@ -844,6 +844,10 @@ void WebViewWindow::platformOpen() {
         // The window has no surface of its own, so what the composition draws over it is all that shows.
         exStyle |= WS_EX_NOREDIRECTIONBITMAP;
     }
+    if (options.clickThrough) {
+        // Hit testing skips the window, so mouse clicks reach whatever is beneath it.
+        exStyle |= WS_EX_TRANSPARENT;
+    }
 
     native_.reset(new NativeWindow);
     NativeWindow* native = native_.get();

@@ -47,6 +47,16 @@ public static class WebViewTestNative {
     private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")]
     private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(POINT point);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT {
+        public int X;
+        public int Y;
+    }
 
     // The top-level window of a process with the title, shown or hidden, or IntPtr.Zero.
     public static IntPtr FindWindow(uint processId, string title) {
@@ -81,6 +91,16 @@ public static class WebViewTestNative {
 
     public static void MovePointer(int x, int y) {
         SetCursorPos(x, y);
+    }
+
+    // The top-level window that hit testing finds at the screen point, skipping windows that are click-through, or IntPtr.Zero.
+    public static IntPtr TopLevelAt(int x, int y) {
+        const uint gaRoot = 2;
+        POINT point;
+        point.X = x;
+        point.Y = y;
+        IntPtr window = WindowFromPoint(point);
+        return window == IntPtr.Zero ? IntPtr.Zero : GetAncestor(window, gaRoot);
     }
 
     // The left button, pressed or released where the pointer is.

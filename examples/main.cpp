@@ -36,6 +36,7 @@
 //   --min-size <w> <h>        the smallest size the user can resize the window to
 //   --startup-timeout <s>     seconds the page has to report ready before the window fails (0 for no limit)
 //   --no-ready                the built-in page never reports ready, so the window fails at the startup timeout
+//   --click-through           the window passes mouse clicks through to the windows beneath it
 // The state is one line: "visible=<0|1> open=<0|1> frame=<x>,<y>,<width>,<height> area=<x>,<y>,<width>,<height>". The frame is the
 // window's rectangle on the screen in pixels, or "frame=none" when it has no native window. The area is the work area of the
 // monitor the window is on, or "area=none".
@@ -81,6 +82,7 @@ struct Settings {
     bool autosize = false;
     bool invisible = false;
     bool noReady = false;
+    bool clickThrough = false;
     int minWidth = 0;
     int minHeight = 0;
     std::chrono::seconds startupTimeout = std::chrono::seconds(30);
@@ -177,6 +179,7 @@ private:
         options.skipTaskbar = settings.skipTaskbar;
         options.utility = settings.utility;
         options.transparent = !settings.opaque;
+        options.clickThrough = settings.clickThrough;
         options.titleBar = !settings.noTitleBar;
         options.resizable = !settings.notResizable;
         options.resizeEdges = settings.resizeEdges;
@@ -272,6 +275,8 @@ bool parseSettings(int argc, char** argv, Settings& settings) {
             settings.utility = true;
         } else if (arg == "--opaque") {
             settings.opaque = true;
+        } else if (arg == "--click-through") {
+            settings.clickThrough = true;
         } else if (arg == "--clear-page") {
             settings.clearPage = true;
         } else if (arg == "--no-titlebar") {
