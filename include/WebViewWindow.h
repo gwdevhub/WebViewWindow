@@ -304,6 +304,10 @@ struct TrayMenuItem {
 bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
 void removeTrayIcon();
 
+// Shows a balloon notification from the application's icon in the notification area. It uses the tray icon when one is shown,
+// and otherwise a short-lived icon. Returns false when there is no icon to show it from. Callable from any thread (Windows only).
+bool showTrayBalloon(const std::string& title, const std::string& body);
+
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but
 // they aren't part of the window.
 
