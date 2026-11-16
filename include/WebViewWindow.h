@@ -177,6 +177,9 @@ protected:
     virtual void onFrameChanged() {}
     // Called when the page reports that it's ready. The window has been shown by then.
     virtual void onPageReady() {}
+    // Called once for each native window, when its page is ready and just before the window is first shown. The host can set the
+    // window's position and size here, so the window does not show at the place the desktop gives it.
+    virtual void onBeforeFirstShow() {}
     // Called each time a page finishes loading, including after navigations. Unlike onPageReady, this comes from the platform's load
     // events, so the host can inject its own script here.
     virtual void onPageLoaded() {}
