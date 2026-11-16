@@ -177,6 +177,9 @@ protected:
     virtual void onFrameChanged() {}
     // Called when the page reports that it's ready. The window has been shown by then.
     virtual void onPageReady() {}
+    // Called once for each native window, when its page is ready and just before the window is first shown. The host can set the
+    // window's position and size here, so the window does not show at the place the desktop gives it.
+    virtual void onBeforeFirstShow() {}
     // Called each time a page finishes loading, including after navigations. Unlike onPageReady, this comes from the platform's load
     // events, so the host can inject its own script here.
     virtual void onPageLoaded() {}
@@ -300,6 +303,10 @@ struct TrayMenuItem {
 // behaviour. The icon stays until removeTrayIcon is called.
 bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
 void removeTrayIcon();
+
+// Shows a balloon notification from the application's icon in the notification area. It uses the tray icon when one is shown,
+// and otherwise a short-lived icon. Returns false when there is no icon to show it from. Callable from any thread (Windows only).
+bool showTrayBalloon(const std::string& title, const std::string& body);
 
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but
 // they aren't part of the window.

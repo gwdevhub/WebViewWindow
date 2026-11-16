@@ -4,6 +4,7 @@
 
 #include <windows.h>
 #include <objbase.h>
+#include <shellapi.h>
 #include <windowsx.h>
 
 #include <WebView2.h>
@@ -24,6 +25,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <iterator>
 #include <exception>
@@ -1049,16 +1051,13 @@ void offerLink(const std::string& message, const std::string& link) {
     }
 }
 
-// Windows takes each window's icon from the executable's resource, so there's nothing to set here.
-// TODO: embed the application icon as an .ico resource in the Windows build, so the taskbar shows it.
+// Windows takes the window and tray icon from the executable's icon resource (resource 1, an .ico in the host's build), so the PNG
+// that setApplicationIcon is given is not needed here.
 void setApplicationIcon(const std::string&) {}
-
-// TODO: Shell_NotifyIconW tray icon with a hidden message window. Until then, hosts fall back to their own behaviour.
-bool showTrayIcon(const std::string&, std::function<void()>, std::vector<TrayMenuItem>) { return false; }
-void removeTrayIcon() {}
 
 namespace {
 void initializeTaskWindow();
+void initializeTrayWindow();
 }
 
 namespace {
@@ -1104,9 +1103,173 @@ void installWebView2Loader() {
 
 }  // namespace
 
+namespace {
+
+// The notification area. A hidden message-only window on the UI thread owns the tray icon and receives its clicks. Balloon
+// requests can come from any thread: they are sent to that window, so they run on the UI thread and the caller waits for the answer.
+const UINT kTrayCallback = WM_APP + 2;   // the icon's mouse messages (lParam is the mouse message)
+const UINT kTrayBalloon = WM_APP + 3;    // a balloon request (wParam: BalloonRequest*)
+const UINT kTrayIconId = 1;              // the tray icon
+const UINT kBalloonIconId = 2;           // the short-lived icon that carries a balloon when there is no tray icon
+const UINT_PTR kBalloonTimer = 2;        // removes that icon once the balloon has had its time
+const UINT kBalloonLifetimeMs = 10000;
+
+struct BalloonRequest {
+    std::wstring title;
+    std::wstring body;
+    bool shown = false;
+};
+
+HWND trayWindow = nullptr;
+UINT taskbarRestarted = 0;               // broadcast when Explorer starts again, which drops the tray icon
+bool trayIconShown = false;
+std::function<void()> trayActivate;
+std::vector<TrayMenuItem> trayMenu;
+std::string trayTooltipText;
+
+// The application icon at the size the notification area uses. Shell_NotifyIcon copies it, so the caller may free it after the call.
+HICON trayIconHandle() {
+    return static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+}
+
+// Adds the tray icon, or updates it when it is already there (Explorer may have lost it).
+bool addTrayIcon(const std::string& tooltip) {
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = trayWindow;
+    data.uID = kTrayIconId;
+    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    data.uCallbackMessage = kTrayCallback;
+    data.hIcon = trayIconHandle();
+    const std::wstring tip = toWide(tooltip);
+    std::wcsncpy(data.szTip, tip.c_str(), std::size(data.szTip) - 1);
+    const bool ok = Shell_NotifyIconW(NIM_ADD, &data) || Shell_NotifyIconW(NIM_MODIFY, &data);
+    if (data.hIcon) DestroyIcon(data.hIcon);
+    return ok;
+}
+
+void showTrayMenu(HWND hwnd) {
+    if (trayMenu.empty()) return;
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    for (std::size_t i = 0; i < trayMenu.size(); ++i) {
+        const std::wstring label = toWide(trayMenu[i].label);
+        AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(i + 1), label.c_str());
+    }
+    POINT point{};
+    GetCursorPos(&point);
+    // The window must be in front for the menu to close when the user clicks elsewhere (the usual shell rule).
+    SetForegroundWindow(hwnd);
+    const UINT chosen = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, point.x, point.y, 0, hwnd, nullptr);
+    PostMessageW(hwnd, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    if (chosen >= 1 && chosen <= trayMenu.size()) {
+        const auto action = trayMenu[chosen - 1].action;
+        if (action) action();
+    }
+}
+
+bool showBalloon(const BalloonRequest& request) {
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = trayWindow;
+    data.uFlags = NIF_INFO;
+    data.dwInfoFlags = NIIF_INFO;
+    std::wcsncpy(data.szInfoTitle, request.title.c_str(), std::size(data.szInfoTitle) - 1);
+    std::wcsncpy(data.szInfo, request.body.c_str(), std::size(data.szInfo) - 1);
+    if (trayIconShown) {
+        data.uID = kTrayIconId;
+        return Shell_NotifyIconW(NIM_MODIFY, &data);
+    }
+    // No tray icon is shown: a short-lived one carries the balloon, and the timer removes it.
+    data.uID = kBalloonIconId;
+    data.uFlags |= NIF_ICON;
+    data.hIcon = trayIconHandle();
+    const bool ok = Shell_NotifyIconW(NIM_ADD, &data) || Shell_NotifyIconW(NIM_MODIFY, &data);
+    if (data.hIcon) DestroyIcon(data.hIcon);
+    if (ok) SetTimer(trayWindow, kBalloonTimer, kBalloonLifetimeMs, nullptr);
+    return ok;
+}
+
+LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == kTrayCallback) {
+        if (lParam == WM_LBUTTONUP && trayActivate) {
+            trayActivate();
+        } else if (lParam == WM_RBUTTONUP) {
+            showTrayMenu(hwnd);
+        }
+        return 0;
+    }
+    if (message == kTrayBalloon) {
+        auto* request = reinterpret_cast<BalloonRequest*>(wParam);
+        request->shown = showBalloon(*request);
+        return 0;
+    }
+    if (message == WM_TIMER && wParam == kBalloonTimer) {
+        KillTimer(hwnd, kBalloonTimer);
+        NOTIFYICONDATAW data{};
+        data.cbSize = sizeof(data);
+        data.hWnd = hwnd;
+        data.uID = kBalloonIconId;
+        Shell_NotifyIconW(NIM_DELETE, &data);
+        return 0;
+    }
+    if (taskbarRestarted && message == taskbarRestarted && trayIconShown) {
+        addTrayIcon(trayTooltipText);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+void initializeTrayWindow() {
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = trayWindowProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = L"WebViewWindowTray";
+    if (!RegisterClassW(&windowClass)) {
+        return;   // without the window there is no tray; hosts then fall back to their own behaviour
+    }
+    trayWindow = CreateWindowExW(0, windowClass.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, nullptr);
+    taskbarRestarted = RegisterWindowMessageW(L"TaskbarCreated");
+}
+
+}  // namespace
+
+bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu) {
+    if (!trayWindow) return false;
+    trayActivate = std::move(onActivate);
+    trayMenu = std::move(menu);
+    trayTooltipText = tooltip;
+    trayIconShown = addTrayIcon(tooltip);
+    return trayIconShown;
+}
+
+void removeTrayIcon() {
+    if (trayIconShown && trayWindow) {
+        NOTIFYICONDATAW data{};
+        data.cbSize = sizeof(data);
+        data.hWnd = trayWindow;
+        data.uID = kTrayIconId;
+        Shell_NotifyIconW(NIM_DELETE, &data);
+    }
+    trayIconShown = false;
+    trayActivate = nullptr;
+    trayMenu.clear();
+}
+
+bool showTrayBalloon(const std::string& title, const std::string& body) {
+    if (!trayWindow) return false;
+    BalloonRequest request{toWide(title), toWide(body), false};
+    // Sent, not posted: the answer is needed. From the UI thread this runs at once; from another thread it waits for the UI thread.
+    SendMessageW(trayWindow, kTrayBalloon, reinterpret_cast<WPARAM>(&request), 0);
+    return request.shown;
+}
+
 void initializeWindowing() {
     installWebView2Loader();
     initializeTaskWindow();
+    initializeTrayWindow();
     requireWindowingRuntime();
 }
 

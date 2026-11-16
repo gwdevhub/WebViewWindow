@@ -36,6 +36,7 @@ struct NativeWindow {
     bool pageReady = false;
     bool wantsVisible = false;
     bool wantsFocus = false;
+    bool shownOnce = false;
     // The window's position when it was last hidden. GTK centres a toplevel again each time it's shown, so it's put back on show.
     bool hasHiddenPosition = false;
     int hiddenX = 0;
@@ -890,6 +891,10 @@ void WebViewWindow::platformShow(bool visible) {
         return;
     }
     if (visible) {
+        if (!native_->shownOnce) {
+            native_->shownOnce = true;
+            onBeforeFirstShow();
+        }
         // Moved before the window is shown: a window manager can place a window that's moved after it maps.
         if (native_->hasHiddenPosition) {
             api().window_move(reinterpret_cast<GtkWindow*>(native_->window), native_->hiddenX, native_->hiddenY);
@@ -981,6 +986,10 @@ void WebViewWindow::platformPageReady() {
         return;
     }
     native_->pageReady = true;
+    if (native_->wantsVisible && !native_->shownOnce) {
+        native_->shownOnce = true;
+        onBeforeFirstShow();
+    }
     showReadyPage(native_.get());
 }
 
