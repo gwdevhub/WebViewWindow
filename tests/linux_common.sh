@@ -109,9 +109,16 @@ last_state() {
     grep "^visible=" "$work/out.txt" | tail -n 1
 }
 
-# Whether the window is on screen, as the window manager reports it.
+# Whether the window is on screen. On Wayland xdotool can't see the window, so the example is asked for its visible flag.
 window_shown() {
-    xdotool search --onlyvisible --name "^${title}$" 2>/dev/null | head -n 1 | grep -q .
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        local before
+        before="$(lines_so_far)"
+        echo report >&3
+        wait_for_line_after "$before" '^visible=' && last_state | grep -q '^visible=1 '
+    else
+        xdotool search --onlyvisible --name "^${title}$" 2>/dev/null | head -n 1 | grep -q .
+    fi
 }
 
 # Waits until the window is shown or hidden on screen.

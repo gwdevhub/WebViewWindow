@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -20,6 +21,8 @@ struct NativeWindow {
     WebKitUserContentManager* manager = nullptr;
     // Set while the user drags or resizes the window: the window follows the pointer, and the frame it began with is kept here.
     bool snapping = false;
+    // Set between a press and its release on the window, since a compositor may not report the button as held.
+    bool buttonDown = false;
     ScreenRect dragStart;
     // The pointer where the drag began, and whether it resizes from edge.
     int pressX = 0;
@@ -88,6 +91,9 @@ struct GtkApi {
     void* (*cairo_region_create)() = nullptr;
     void (*cairo_region_destroy)(void*) = nullptr;
     guint32 (*x11_server_time)(GdkWindow*) = nullptr;
+    GdkDisplay* (*window_get_display)(GdkWindow*) = nullptr;
+    gsize (*x11_display_get_type)() = nullptr;
+    gboolean (*type_check_instance_is_a)(void*, gsize) = nullptr;
     void (*window_begin_resize_drag)(GtkWindow*, GdkWindowEdge, gint, gint, gint, guint32) = nullptr;
     void (*window_begin_move_drag)(GtkWindow*, gint, gint, gint, guint32) = nullptr;
     void (*window_iconify)(GtkWindow*) = nullptr;
@@ -228,6 +234,10 @@ GtkApi loadApi() {
     }
     // Only on X11. Without it the focus request carries no time, and the window manager may refuse it.
     api.x11_server_time = reinterpret_cast<decltype(api.x11_server_time)>(dlsym(library, "gdk_x11_get_server_time"));
+    api.window_get_display = reinterpret_cast<decltype(api.window_get_display)>(dlsym(library, "gdk_window_get_display"));
+    api.x11_display_get_type = reinterpret_cast<decltype(api.x11_display_get_type)>(dlsym(library, "gdk_x11_display_get_type"));
+    api.type_check_instance_is_a =
+        reinterpret_cast<decltype(api.type_check_instance_is_a)>(dlsym(library, "g_type_check_instance_is_a"));
     bind(api.widget_hide, library, "gtk_widget_hide");
     bind(api.widget_destroy, library, "gtk_widget_destroy");
     bind(api.main_loop, library, "gtk_main");
@@ -279,8 +289,17 @@ const GtkApi& api() {
     return loaded;
 }
 
+// A Wayland client can't place or read its own window, so under Wayland the windows run through XWayland, where they can.
+// Must run before GTK initialises, which fixes the backend.
+void preferXWayland() {
+    if (!getenv("GDK_BACKEND") && getenv("WAYLAND_DISPLAY") && getenv("DISPLAY")) {
+        setenv("GDK_BACKEND", "x11", 0);
+    }
+}
+
 void ensureGtk() {
     static const bool initialized = [] {
+        preferXWayland();
         if (!api().init_check(nullptr, nullptr)) {
             throw std::runtime_error("GTK couldn't open a display.");
         }
@@ -294,11 +313,20 @@ GdkPixbuf* applicationIcon = nullptr;
 
 // The X server's time, which a window manager needs on a focus or move request. GDK_CURRENT_TIME when it isn't available.
 guint32 serverTime(GtkWidget* widget) {
-    if (!api().x11_server_time) {
+    const GtkApi& gtk = api();
+    if (!gtk.x11_server_time || !gtk.window_get_display || !gtk.x11_display_get_type || !gtk.type_check_instance_is_a) {
         return GDK_CURRENT_TIME;
     }
-    GdkWindow* gdkWindow = api().widget_get_window(widget);
-    return gdkWindow ? api().x11_server_time(gdkWindow) : GDK_CURRENT_TIME;
+    GdkWindow* gdkWindow = gtk.widget_get_window(widget);
+    if (!gdkWindow) {
+        return GDK_CURRENT_TIME;
+    }
+    // The symbol exists under Wayland too, and calling it there dereferences a null X display.
+    GdkDisplay* display = gtk.window_get_display(gdkWindow);
+    if (!gtk.type_check_instance_is_a(display, gtk.x11_display_get_type())) {
+        return GDK_CURRENT_TIME;
+    }
+    return gtk.x11_server_time(gdkWindow);
 }
 
 // Shows the window once its page has reported ready, if it's wanted yet. Focus goes to it only if it was asked for.
@@ -335,6 +363,16 @@ void onScriptMessage(WebKitUserContentManager*, JSCValue* value, WebKitUserMessa
 // Returning TRUE keeps the window open. The window decides, through requestClose.
 gboolean onFocusOut(GtkWidget*, GdkEvent*, gpointer data) {
     static_cast<WebViewWindow*>(data)->notifyFocusLost();
+    return FALSE;
+}
+
+gboolean onButtonPress(GtkWidget*, GdkEvent*, gpointer data) {
+    static_cast<NativeWindow*>(data)->buttonDown = true;
+    return FALSE;
+}
+
+gboolean onButtonRelease(GtkWidget*, GdkEvent*, gpointer data) {
+    static_cast<NativeWindow*>(data)->buttonDown = false;
     return FALSE;
 }
 
@@ -564,6 +602,10 @@ void WebViewWindow::platformOpen() {
                               static_cast<GConnectFlags>(0));
     gtk.g_signal_connect_data(native.window, "focus-out-event", reinterpret_cast<GCallback>(onFocusOut), this, nullptr,
                               static_cast<GConnectFlags>(0));
+    gtk.g_signal_connect_data(native.window, "button-press-event", reinterpret_cast<GCallback>(onButtonPress), &native, nullptr,
+                              static_cast<GConnectFlags>(0));
+    gtk.g_signal_connect_data(native.window, "button-release-event", reinterpret_cast<GCallback>(onButtonRelease), &native, nullptr,
+                              static_cast<GConnectFlags>(0));
 
     const std::string url = devUrl();
     if (!url.empty()) {
@@ -608,10 +650,10 @@ int snapToGrid(int logical, int scale) {
 }
 
 // The pointer's position on the screen, and whether the left button is held.
-bool pointerState(int& x, int& y) {
+bool pointerState(const NativeWindow& native, int& x, int& y) {
     guint mask = 0;
     api().display_get_pointer(api().display_get_default(), nullptr, &x, &y, &mask);
-    return (mask & kButton1Mask) != 0;
+    return (mask & kButton1Mask) != 0 || native.buttonDown;
 }
 
 // The window's frame as GTK reports it, in logical pixels.
@@ -739,7 +781,7 @@ gboolean onDragPoll(gpointer data) {
     auto* native = static_cast<NativeWindow*>(data);
     int x = 0;
     int y = 0;
-    if (pointerState(x, y)) {
+    if (pointerState(*native, x, y)) {
         if (native->manual && native->window) {
             applyTarget(native, dragTarget(*native, x - native->pressX, y - native->pressY));
         }
@@ -756,7 +798,7 @@ gboolean onDragPoll(gpointer data) {
 void beginDrag(NativeWindow* native, bool resizing, ResizeEdge edge, bool manual) {
     int x = 0;
     int y = 0;
-    if (!native->window || !pointerState(x, y)) {
+    if (!native->window || !pointerState(*native, x, y)) {
         return;
     }
     native->resizing = resizing;
@@ -947,6 +989,7 @@ std::optional<RuntimeProblem> missingWindowingRuntime() {
         return RuntimeProblem{"WebKitGTK 4.1 isn't installed, so the windows can't open. Install it (libwebkit2gtk-4.1-0 on Debian and Ubuntu, webkit2gtk4.1 on Fedora, webkit2gtk-4.1 on Arch) and start the application again.", ""};
     }
     try {
+        preferXWayland();
         if (!api().init_check(nullptr, nullptr)) {
             return RuntimeProblem{"GTK couldn't open a display. Start the application from a desktop session.", ""};
         }
