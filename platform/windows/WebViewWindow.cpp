@@ -1245,6 +1245,21 @@ bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, 
     return trayIconShown;
 }
 
+std::optional<ScreenRect> trayIconRect() {
+    if (!trayWindow) {
+        return std::nullopt;
+    }
+    NOTIFYICONIDENTIFIER identifier{};
+    identifier.cbSize = sizeof(identifier);
+    identifier.hWnd = trayWindow;
+    identifier.uID = kTrayIconId;
+    RECT rect{};
+    if (Shell_NotifyIconGetRect(&identifier, &rect) != S_OK) {
+        return std::nullopt;
+    }
+    return ScreenRect{rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top};
+}
+
 void removeTrayIcon() {
     if (trayIconShown && trayWindow) {
         NOTIFYICONDATAW data{};

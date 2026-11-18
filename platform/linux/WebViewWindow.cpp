@@ -141,6 +141,7 @@ struct GtkApi {
     void (*status_icon_set_tooltip_text)(void*, const gchar*) = nullptr;
     void (*status_icon_set_visible)(void*, gboolean) = nullptr;
     void (*status_icon_position_menu)(GtkWidget*, gint*, gint*, gboolean*, gpointer) = nullptr;
+    gboolean (*status_icon_get_geometry)(void*, void*, GdkRectangle*, void*) = nullptr;
     GtkWidget* (*menu_new)() = nullptr;
     GtkWidget* (*menu_item_new_with_label)(const gchar*) = nullptr;
     void (*menu_shell_append)(GtkMenuShell*, GtkWidget*) = nullptr;
@@ -266,6 +267,7 @@ GtkApi loadApi() {
     bind(api.status_icon_set_tooltip_text, library, "gtk_status_icon_set_tooltip_text");
     bind(api.status_icon_set_visible, library, "gtk_status_icon_set_visible");
     bind(api.status_icon_position_menu, library, "gtk_status_icon_position_menu");
+    bind(api.status_icon_get_geometry, library, "gtk_status_icon_get_geometry");
     bind(api.menu_new, library, "gtk_menu_new");
     bind(api.menu_item_new_with_label, library, "gtk_menu_item_new_with_label");
     bind(api.menu_shell_append, library, "gtk_menu_shell_append");
@@ -1129,6 +1131,18 @@ bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, 
     api().status_icon_set_visible(state->icon, TRUE);
     trayState = std::move(state);
     return true;
+}
+
+std::optional<ScreenRect> trayIconRect() {
+    if (!trayState || !trayState->icon || !api().status_icon_get_geometry) {
+        return std::nullopt;
+    }
+    GdkRectangle area{};
+    // GTK answers with a 1x1 area at the origin until the icon has been placed in the tray, so that isn't a position.
+    if (!api().status_icon_get_geometry(trayState->icon, nullptr, &area, nullptr) || area.width <= 1 || area.height <= 1) {
+        return std::nullopt;
+    }
+    return ScreenRect{area.x, area.y, area.width, area.height};
 }
 
 void removeTrayIcon() {

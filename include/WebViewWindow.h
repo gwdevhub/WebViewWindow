@@ -304,6 +304,10 @@ struct TrayMenuItem {
 bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
 void removeTrayIcon();
 
+// The tray icon's rectangle on the screen, so a popup can open beside it. Nothing when there's no tray icon, or the desktop doesn't say
+// where it is. Linux's status icon and Windows' notification icon report it; macOS doesn't yet.
+std::optional<ScreenRect> trayIconRect();
+
 // Shows a balloon notification from the application's icon in the notification area. It uses the tray icon when one is shown,
 // and otherwise a short-lived icon. Returns false when there is no icon to show it from. Callable from any thread (Windows only).
 bool showTrayBalloon(const std::string& title, const std::string& body);

@@ -1005,6 +1005,11 @@ bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, 
     return true;
 }
 
+// Not implemented on macOS yet, so a popup opened from the tray falls back to the pointer's position.
+std::optional<ScreenRect> trayIconRect() {
+    return std::nullopt;
+}
+
 void removeTrayIcon() {
     if (!trayState) {
         return;
