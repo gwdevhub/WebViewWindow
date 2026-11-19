@@ -9,10 +9,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <map>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 #include "WebViewWindow.h"
+
+// The data manager is only handed back to WebKit, so its type is opaque here. The vendored headers don't declare it.
+using WebKitWebsiteDataManager = struct _WebKitWebsiteDataManager;
 
 
 struct NativeWindow {
@@ -71,6 +79,10 @@ struct GtkApi {
     void (*window_get_position)(GtkWindow*, gint*, gint*) = nullptr;
     void (*window_get_size)(GtkWindow*, gint*, gint*) = nullptr;
     void (*window_set_decorated)(GtkWindow*, gboolean) = nullptr;
+    void (*window_set_resizable)(GtkWindow*, gboolean) = nullptr;
+    // GtkWindow, GtkWidget, GdkGeometry and GdkWindowHints. The geometry and hints are passed as pointers and an int, so the layout of
+    // GdkGeometry (below) is the only thing that must match GTK.
+    void (*window_set_geometry_hints)(GtkWindow*, GtkWidget*, const void*, int) = nullptr;
     void (*window_set_skip_taskbar_hint)(GtkWindow*, gboolean) = nullptr;
     void (*window_set_keep_above)(GtkWindow*, gboolean) = nullptr;
     void (*window_present)(GtkWindow*) = nullptr;
@@ -155,6 +167,12 @@ struct GtkApi {
     gboolean (*permission_request_deny)(WebKitPermissionRequest*) = nullptr;
     void (*web_context_initialize_notification_permissions)(WebKitWebContext*, GList*, GList*) = nullptr;
     WebKitWebContext* (*web_view_get_context)(WebKitWebView*) = nullptr;
+    // A context whose data folders are chosen (see contextForDataFolder). variadic: the property names and values, then nullptr.
+    WebKitWebsiteDataManager* (*website_data_manager_new)(const char*, ...) = nullptr;
+    WebKitWebContext* (*web_context_new_with_website_data_manager)(WebKitWebsiteDataManager*) = nullptr;
+    // WebKitGTK has no constructor that takes both a context and a content manager, so the view is made with g_object_new.
+    gsize (*web_view_get_type)() = nullptr;   // a GType
+    void* (*object_new)(gsize, const char*, ...) = nullptr;   // the GType first
     gpointer (*security_origin_new_for_uri)(const gchar*) = nullptr;
     GList* (*list_append)(GList*, gpointer) = nullptr;
     void (*list_free)(GList*) = nullptr;
@@ -194,6 +212,8 @@ GtkApi loadApi() {
     bind(api.window_get_position, library, "gtk_window_get_position");
     bind(api.window_get_size, library, "gtk_window_get_size");
     bind(api.window_set_decorated, library, "gtk_window_set_decorated");
+    bind(api.window_set_resizable, library, "gtk_window_set_resizable");
+    bind(api.window_set_geometry_hints, library, "gtk_window_set_geometry_hints");
     bind(api.window_set_skip_taskbar_hint, library, "gtk_window_set_skip_taskbar_hint");
     bind(api.window_set_keep_above, library, "gtk_window_set_keep_above");
     bind(api.window_present, library, "gtk_window_present");
@@ -287,6 +307,10 @@ GtkApi loadApi() {
     bind(api.g_type_check_instance_is_a, library, "g_type_check_instance_is_a");
     bind(api.web_context_initialize_notification_permissions, library, "webkit_web_context_initialize_notification_permissions");
     bind(api.web_view_get_context, library, "webkit_web_view_get_context");
+    bind(api.website_data_manager_new, library, "webkit_website_data_manager_new");
+    bind(api.web_context_new_with_website_data_manager, library, "webkit_web_context_new_with_website_data_manager");
+    bind(api.web_view_get_type, library, "webkit_web_view_get_type");
+    bind(api.object_new, library, "g_object_new");
     bind(api.download_set_destination, library, "webkit_download_set_destination");
     bind(api.filename_to_uri, library, "g_filename_to_uri");
     bind(api.security_origin_new_for_uri, library, "webkit_security_origin_new_for_uri");
@@ -514,6 +538,29 @@ void NativeWindowDeleter::operator()(NativeWindow* native) const {
     delete native;
 }
 
+// The WebKit context that keeps a window's data in its data folder. WebKit fixes a context's data folders when the context is made, so
+// each folder gets a context of its own, made once and kept for the life of the program. A window with no folder uses WebKit's default
+// context (see platformOpen).
+WebKitWebContext* contextForDataFolder(const std::filesystem::path& folder) {
+    static std::map<std::string, WebKitWebContext*> contexts;
+    const std::string key = folder.string();
+    if (const auto found = contexts.find(key); found != contexts.end()) {
+        return found->second;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    if (error) {
+        throw std::runtime_error("The data folder couldn't be created: " + key);
+    }
+    const std::string data = (folder / "data").string();
+    const std::string cache = (folder / "cache").string();
+    WebKitWebsiteDataManager* manager =
+        api().website_data_manager_new("base-data-directory", data.c_str(), "base-cache-directory", cache.c_str(), nullptr);
+    WebKitWebContext* context = api().web_context_new_with_website_data_manager(manager);
+    contexts[key] = context;
+    return context;
+}
+
 void WebViewWindow::platformOpen() {
     ensureGtk();
     const GtkApi& gtk = api();
@@ -551,6 +598,20 @@ void WebViewWindow::platformOpen() {
     gtk.window_set_position(window, GTK_WIN_POS_CENTER);
     // The page draws the title bar, so the window manager draws none.
     gtk.window_set_decorated(window, FALSE);
+    // A window that isn't resizable keeps its size: the user can't drag its edges.
+    gtk.window_set_resizable(window, options_.resizable ? TRUE : FALSE);
+    // The smallest size the user can drag the window to. Only the user's resizing is held to it: the page can still set a smaller one.
+    if (options_.minWidth > 0 || options_.minHeight > 0) {
+        // GTK 3's GdkGeometry. Only the minimum size is set; GDK_HINT_MIN_SIZE is the hint that says so.
+        struct GdkGeometryHints {
+            gint minWidth, minHeight, maxWidth, maxHeight, baseWidth, baseHeight, widthInc, heightInc;
+            double minAspect, maxAspect;
+            gint winGravity;
+        };
+        constexpr int kHintMinSize = 1 << 1;
+        const GdkGeometryHints hints{scaledSize(options_.minWidth), scaledSize(options_.minHeight), 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        gtk.window_set_geometry_hints(window, nullptr, &hints, kHintMinSize);
+    }
     // Left resizable even for an autosize window: GTK keeps a fixed-size web view window at least 200 pixels square, and
     // a frameless window offers the user no edges unless the page draws them.
     gtk.window_set_skip_taskbar_hint(window, options_.skipTaskbar);
@@ -582,7 +643,13 @@ void WebViewWindow::platformOpen() {
     gtk.g_signal_connect_data(native.manager, "script-message-with-reply-received::host",
                               reinterpret_cast<GCallback>(onScriptMessage), this, nullptr, static_cast<GConnectFlags>(0));
     gtk.user_content_manager_register_script_message_handler_with_reply(native.manager, "host", nullptr);
-    native.view = reinterpret_cast<WebKitWebView*>(gtk.web_view_new_with_user_content_manager(native.manager));
+    if (options_.webViewDataFolder.empty()) {
+        native.view = reinterpret_cast<WebKitWebView*>(gtk.web_view_new_with_user_content_manager(native.manager));
+    } else {
+        WebKitWebContext* own = contextForDataFolder(options_.webViewDataFolder);
+        native.view = reinterpret_cast<WebKitWebView*>(gtk.object_new(gtk.web_view_get_type(), "web-context", own,
+                                                                      "user-content-manager", native.manager, nullptr));
+    }
     if (options_.hardwareAcceleration) {
         WebKitHardwareAccelerationPolicy policy = WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND;
         switch (*options_.hardwareAcceleration) {
@@ -608,10 +675,9 @@ void WebViewWindow::platformOpen() {
     gtk.g_signal_connect_data(native.view, "web-process-crashed", reinterpret_cast<GCallback>(onWebProcessCrashed), this,
                               nullptr, static_cast<GConnectFlags>(0));
     WebKitWebContext* context = gtk.web_view_get_context(native.view);
-    // The download handler is the same for every window, so it's connected to the shared context once.
-    static bool downloadsConnected = false;
-    if (!downloadsConnected) {
-        downloadsConnected = true;
+    // The download handler is the same for every window, so it's connected once for each context: the shared one and each data folder's.
+    static std::set<WebKitWebContext*> connectedContexts;
+    if (connectedContexts.insert(context).second) {
         gtk.g_signal_connect_data(context, "download-started", reinterpret_cast<GCallback>(onDownloadStarted), nullptr,
                                   nullptr, static_cast<GConnectFlags>(0));
     }
@@ -1279,3 +1345,65 @@ std::optional<std::pair<int, int>> cursorPosition() {
     return std::make_pair(static_cast<int>(x), static_cast<int>(y));
 }
 
+std::filesystem::path executableFolder() {
+    std::error_code error;
+    const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", error);
+    return error ? std::filesystem::path() : self.parent_path();
+}
+
+namespace {
+
+// The GTK library, opened again for the symbols it alone has (the handle is the same library, so this costs nothing).
+void* gtkLibrary() {
+    return dlopen("libgtk-3.so.0", RTLD_LAZY | RTLD_LOCAL);
+}
+
+}  // namespace
+
+// The balloon is a desktop notification, sent through libnotify. The library is opened when the first balloon is shown, so a program
+// that shows none doesn't need it. The notification carries the application's icon when one was set.
+bool showTrayBalloon(const std::string& title, const std::string& body) {
+    using InitFn = int (*)(const char*);
+    using CreateFn = void* (*)(const char*, const char*, const char*);
+    using ImageFn = void (*)(void*, GdkPixbuf*);
+    using ShowFn = int (*)(void*, GError**);
+    static std::mutex lock;   // a balloon can be asked for from any thread
+    std::lock_guard<std::mutex> guard(lock);
+
+    static void* const library = dlopen("libnotify.so.4", RTLD_LAZY | RTLD_LOCAL);
+    if (!library) {
+        return false;
+    }
+    static const auto init = reinterpret_cast<InitFn>(dlsym(library, "notify_init"));
+    static const auto create = reinterpret_cast<CreateFn>(dlsym(library, "notify_notification_new"));
+    static const auto setImage = reinterpret_cast<ImageFn>(dlsym(library, "notify_notification_set_image_from_pixbuf"));
+    static const auto show = reinterpret_cast<ShowFn>(dlsym(library, "notify_notification_show"));
+    if (!init || !create || !show) {
+        return false;
+    }
+    static const bool initialized = init(applicationName().c_str()) != 0;
+    if (!initialized) {
+        return false;
+    }
+
+    void* notification = create(title.c_str(), body.c_str(), nullptr);
+    if (!notification) {
+        return false;
+    }
+    if (setImage && applicationIcon) {
+        setImage(notification, applicationIcon);
+    }
+    GError* error = nullptr;
+    const bool shown = show(notification, &error) != 0;
+    if (error) {
+        if (void* gtk = gtkLibrary()) {
+            reinterpret_cast<void (*)(GError*)>(dlsym(gtk, "g_error_free"))(error);
+        }
+    }
+    if (void* gtk = gtkLibrary()) {
+        if (auto unref = reinterpret_cast<void (*)(gpointer)>(dlsym(gtk, "g_object_unref"))) {
+            unref(notification);
+        }
+    }
+    return shown;
+}

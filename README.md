@@ -60,6 +60,16 @@ The library is meant to be used as a submodule. The host application:
 The Windows build uses MinGW-w64. The example is built with `WEBVIEW_WINDOW_BUILD_EXAMPLE` (on by default). Set it to OFF
 when the library is used as a submodule. The WebView2 runtime must be installed on the machine that runs the program.
 
+## Testing rule
+
+Every feature needs at least one test that runs on each platform: Windows, Linux and macOS. A test that doesn't depend on the platform
+counts for all three, so one such test is enough. A feature with no passing test on a platform is not finished there.
+
+- A stub counts as a feature. It needs either a real implementation, or a test that checks the result the header documents (for example,
+  that `updateTrayIcon` returns `false` where it isn't implemented).
+- A test counts only when a script in `tests/` or a CI job runs it on that platform. A test that is written but never run doesn't count.
+- `TODO.md` lists the features that have no test on each platform.
+
 ## Status
 
 - Windows: built and run with the example. The permission hook compiles with MinGW but hasn't been run on Windows yet. The
