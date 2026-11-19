@@ -147,6 +147,7 @@ void WebViewWindow::open() {
     platformOpen();
     opened_ = true;
     keepOnScreen();
+    startReadyWatch();
     if (!options_.visible) {
         startCooldown();
     }
@@ -176,6 +177,26 @@ void WebViewWindow::hide() {
     visible_ = false;
     platformShow(false);
     startCooldown();
+}
+
+void WebViewWindow::startReadyWatch() {
+    const auto timeout = options_.readyTimeout;
+    if (timeout.count() <= 0) {
+        return;
+    }
+    // Like the cooldown, the thread only waits. The check runs on the window's thread, and only if this page is still the one
+    // open and it has still not reported ready.
+    const std::uint64_t generation = pageGeneration_;
+    std::thread([this, alive = std::weak_ptr<bool>(alive_), generation, timeout] {
+        std::this_thread::sleep_for(timeout);
+        runOnUiThread([this, alive, generation, timeout] {
+            if (alive.expired() || generation != pageGeneration_ || pageReady_ || !opened_) {
+                return;
+            }
+            notifyWebViewFailed("The window did not finish loading within " + std::to_string(timeout.count() / 1000) +
+                                " seconds, so it has been closed.");
+        });
+    }).detach();
 }
 
 void WebViewWindow::startCooldown() {

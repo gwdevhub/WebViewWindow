@@ -51,6 +51,9 @@ struct WindowOptions {
     bool confinedToWorkArea = true;
     // How long a hidden window keeps its web view before the web view is freed. A show or present before then keeps it.
     std::chrono::milliseconds cooldown = std::chrono::minutes(2);
+    // How long a page has to report ready after the window opens. When it does not, the window shows an error and closes. Zero
+    // turns the check off.
+    std::chrono::milliseconds readyTimeout = std::chrono::seconds(10);
     // Kept under other windows, so the window reads as part of the desktop.
     bool keepBelow = false;
     // Shown on every virtual desktop. Windows has none, so there it does nothing.
@@ -225,6 +228,8 @@ private:
     void keepOnScreen();
     // Starts the cooldown after which a hidden window frees its web view. A show or present cancels it.
     void startCooldown();
+    // Shows the error and closes the window when its page has not reported ready within readyTimeout (see WindowOptions).
+    void startReadyWatch();
     void freeWebView();
 
     WindowOptions options_;
