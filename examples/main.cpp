@@ -3,6 +3,8 @@
 //   report: the state is reported
 //   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
+//   region [x y width height]...: the window takes the pointer only over those rectangles, in its units; with none, the pointer
+//         passes through everywhere
 //   resize <nw|n|ne|w|e|sw|s|se>: a resize from that edge starts, and follows the pointer until the button is released
 //   download: the page clicks its first link with a download attribute, and the file is saved to the download folder
 //   probe: the page asks for the microphone and for notifications, and the result is reported as "probe {json}": the
@@ -340,6 +342,14 @@ bool runCommand(ExampleWindow& window, const std::string& line) {
     } else if (command == "titlebar") {
         const bool shown = argument == "on";
         runOnUiThread([&window, shown] { window.setTitleBar(shown); window.report(); });
+    } else if (command == "region") {
+        std::istringstream numbers(line.substr(command.size()));
+        std::vector<ScreenRect> rects;
+        ScreenRect rect;
+        while (numbers >> rect.x >> rect.y >> rect.width >> rect.height) {
+            rects.push_back(rect);
+        }
+        runOnUiThread([&window, rects] { window.setInputRegion(rects); });
     } else if (command == "fit") {
         std::istringstream sizes(line.substr(command.size()));
         int width = 0;

@@ -95,6 +95,10 @@ struct NativeWindow {
     EventRegistrationToken navigationToken{};
     EventRegistrationToken permissionToken{};
     EventRegistrationToken downloadToken{};
+    // The rectangles that take the pointer, in the window's units, once the page has set them. Pointer actions elsewhere go to
+    // the windows beneath.
+    std::vector<ScreenRect> inputRegion;
+    bool inputRegionSet = false;
     // The window stays hidden until its page has loaded, so it never shows as an empty frame.
     bool pageLoaded = false;
     bool wantsVisible = false;
@@ -471,6 +475,21 @@ void moveWithCursor(NativeWindow* native) {
     SetWindowPos(native->hwnd, nullptr, target.left, target.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// Whether a point in client pixels is over one of the window's input rectangles, which are in the window's units.
+bool onInputRegion(const NativeWindow& native, POINT point) {
+    const UINT dpi = GetDpiForWindow(native.hwnd);
+    for (const ScreenRect& rect : native.inputRegion) {
+        const int left = MulDiv(scaledSize(rect.x), dpi, 96);
+        const int top = MulDiv(scaledSize(rect.y), dpi, 96);
+        const int right = MulDiv(scaledSize(rect.right()), dpi, 96);
+        const int bottom = MulDiv(scaledSize(rect.bottom()), dpi, 96);
+        if (point.x >= left && point.x < right && point.y >= top && point.y < bottom) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The composition controller doesn't read the window's mouse messages, so they're passed to it. Its virtual keys are the
 // same bits as the messages' own key flags.
 void forwardMouseInput(NativeWindow* native, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -553,6 +572,18 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     }
     // Every window is frameless. These come before WM_CREATE too, so they don't wait for the window's NativeWindow.
     switch (message) {
+        case WM_NCHITTEST:
+            // A window with an input region takes the pointer only over its rectangles. Elsewhere the hit test is transparent, so
+            // the pointer goes to the window beneath.
+            if (auto* region = reinterpret_cast<NativeWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                region && region->inputRegionSet) {
+                POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &point);
+                if (!onInputRegion(*region, point)) {
+                    return HTTRANSPARENT;
+                }
+            }
+            break;
         case WM_NCCALCSIZE:
             // The client area is the whole window: a resizable window keeps its sizing frame for the size loop, but it takes no room.
             if (wParam) {
@@ -800,6 +831,13 @@ void WebViewWindow::platformBeginMove() {
         }
         native_->snapping = true;
         beginSystemDrag(native_->hwnd, HTCAPTION);
+    }
+}
+
+void WebViewWindow::platformSetInputRegion(const std::vector<ScreenRect>& rects) {
+    if (native_ && native_->hwnd) {
+        native_->inputRegion = rects;
+        native_->inputRegionSet = true;
     }
 }
 

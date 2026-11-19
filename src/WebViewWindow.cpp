@@ -318,6 +318,10 @@ void WebViewWindow::beginResize(ResizeEdge edge) {
     platformBeginResize(edge);
 }
 
+void WebViewWindow::setInputRegion(const std::vector<ScreenRect>& rects) {
+    platformSetInputRegion(rects);
+}
+
 void WebViewWindow::minimize() {
     platformMinimize();
 }

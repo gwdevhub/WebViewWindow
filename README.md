@@ -29,6 +29,10 @@ The library is meant to be used as a submodule. The host application:
   from that edge. The page doesn't need to draw them. It applies when `resizable` is set and the window isn't autosize.
 - `WindowOptions::clickThrough` makes the window pass mouse clicks to whatever is beneath it, so the page gets no pointer input.
   It's fixed when the window opens. On Windows it sets `WS_EX_TRANSPARENT`; on Linux it sets an empty input shape on the GTK window.
+- `WebViewWindow::setInputRegion` makes only some rectangles of the window take the pointer; pointer actions elsewhere pass through
+  to the windows beneath. The rectangles are in the window's units, from its top left, and an empty list lets everything through.
+  The page sends it, so a page can take the pointer over just the parts it draws. Windows answers the hit test, and Linux sets the
+  GTK input shape. macOS doesn't take a region yet, so the whole window takes the pointer there.
 
 ## Permissions
 
@@ -61,7 +65,7 @@ when the library is used as a submodule. The WebView2 runtime must be installed 
 - Windows: built and run with the example. The permission hook compiles with MinGW but hasn't been run on Windows yet. The
   click-through test (`tests/windows_click_through_test.ps1`) is in `.github/workflows/windows-permissions.yml`; it hasn't run yet.
 - Linux: built and run with the example. `tests/linux_example_test.sh`, `tests/linux_permission_test.sh` and
-  `tests/linux_click_through_test.sh` check it. The click-through test passes on X11.
+  `tests/linux_click_through_test.sh` and `tests/linux_input_region_test.sh` check it. The click-through and input-region tests pass on X11.
 - macOS: the window, its WKWebView, and the example's features are implemented in `platform/macos/`. The
   `.github/workflows/macos.yml` workflow builds the library and example on a macOS runner. The `tests/macos_*.sh` scripts check the
   window's behaviour on a Mac; CI only builds them.

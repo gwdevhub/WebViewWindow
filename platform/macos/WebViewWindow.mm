@@ -796,6 +796,9 @@ void WebViewWindow::platformBeginMove() {
     }
 }
 
+// Not implemented on macOS yet, so the whole window takes the pointer.
+void WebViewWindow::platformSetInputRegion(const std::vector<ScreenRect>&) {}
+
 void WebViewWindow::platformBeginResize(ResizeEdge edge) {
     if (native_) {
         beginDrag(native_.get(), true, edge);

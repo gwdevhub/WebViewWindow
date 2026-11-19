@@ -127,6 +127,9 @@ public:
     // Start moving or resizing the window, following the pointer's button press on the page.
     void beginMove();
     void beginResize(ResizeEdge edge);
+    // The parts of the window that take the pointer. Pointer actions elsewhere pass through to whatever is beneath. An empty list
+    // lets all of them through. Rectangles are in the window's units, from its top left. macOS doesn't take a region yet.
+    void setInputRegion(const std::vector<ScreenRect>& rects);
     void minimize();
     void toggleMaximize();
     // Enters or leaves full screen: on macOS the window takes its own Space and covers the menu bar.
@@ -207,6 +210,7 @@ private:
     void platformUnload();
     void platformBeginMove();
     void platformBeginResize(ResizeEdge edge);
+    void platformSetInputRegion(const std::vector<ScreenRect>& rects);
     void platformMinimize();
     void platformToggleMaximize();
     void platformSetFullscreen(bool fullscreen);

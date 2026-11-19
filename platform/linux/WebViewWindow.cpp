@@ -91,6 +91,7 @@ struct GtkApi {
     void (*widget_input_shape_combine_region)(GtkWidget*, void*) = nullptr;
     void* (*cairo_region_create)() = nullptr;
     void (*cairo_region_destroy)(void*) = nullptr;
+    int (*cairo_region_union_rectangle)(void*, const GdkRectangle*) = nullptr;
     guint32 (*x11_server_time)(GdkWindow*) = nullptr;
     GdkDisplay* (*window_get_display)(GdkWindow*) = nullptr;
     gsize (*x11_display_get_type)() = nullptr;
@@ -236,6 +237,7 @@ GtkApi loadApi() {
     if (void* cairo = dlopen("libcairo.so.2", RTLD_LAZY | RTLD_LOCAL)) {
         bind(api.cairo_region_create, cairo, "cairo_region_create");
         bind(api.cairo_region_destroy, cairo, "cairo_region_destroy");
+        bind(api.cairo_region_union_rectangle, cairo, "cairo_region_union_rectangle");
     }
     // Only on X11. Without it the focus request carries no time, and the window manager may refuse it.
     api.x11_server_time = reinterpret_cast<decltype(api.x11_server_time)>(dlsym(library, "gdk_x11_get_server_time"));
@@ -834,6 +836,22 @@ void WebViewWindow::platformBeginMove() {
                                          serverTime(native_->window));
         }
     }
+}
+
+// The window takes the pointer only over the rectangles, in the window's units. An empty list lets all of it through, as
+// clickThrough does. The shape is set on the realized window, and GTK copies the region, so it's released straight after.
+void WebViewWindow::platformSetInputRegion(const std::vector<ScreenRect>& rects) {
+    if (!native_ || !native_->window || !api().cairo_region_create || !api().cairo_region_union_rectangle) {
+        return;
+    }
+    api().widget_realize(native_->window);
+    void* region = api().cairo_region_create();
+    for (const ScreenRect& rect : rects) {
+        const GdkRectangle area{scaledSize(rect.x), scaledSize(rect.y), scaledSize(rect.width), scaledSize(rect.height)};
+        api().cairo_region_union_rectangle(region, &area);
+    }
+    api().widget_input_shape_combine_region(native_->window, region);
+    api().cairo_region_destroy(region);
 }
 
 void WebViewWindow::platformBeginResize(ResizeEdge edge) {
