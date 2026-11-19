@@ -1296,6 +1296,11 @@ void removeTrayIcon() {
     trayMenu.clear();
 }
 
+// Changing the tray icon's picture is not available on this platform yet: the tray keeps its icon.
+bool updateTrayIcon(const std::string&, const std::string&) {
+    return false;
+}
+
 bool showTrayBalloon(const std::string& title, const std::string& body) {
     if (!trayWindow) return false;
     BalloonRequest request{toWide(title), toWide(body), false};

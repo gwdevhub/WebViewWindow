@@ -977,6 +977,11 @@ void setApplicationIcon(const std::string& png) {
     }
 }
 
+// Changing the tray icon's picture is not available on this platform yet: the tray keeps its icon.
+bool updateTrayIcon(const std::string&, const std::string&) {
+    return false;
+}
+
 bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu) {
     if (!applicationIcon) {
         return false;

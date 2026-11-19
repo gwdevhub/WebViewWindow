@@ -313,6 +313,10 @@ struct TrayMenuItem {
 bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
 void removeTrayIcon();
 
+// Changes the tray icon's picture and tooltip while the tray icon is shown. The picture is PNG bytes; empty keeps the picture. Returns
+// false when no tray icon is shown, or the platform cannot change it yet.
+bool updateTrayIcon(const std::string& png, const std::string& tooltip);
+
 // Shows a balloon notification from the application's icon in the notification area. It uses the tray icon when one is shown,
 // and otherwise a short-lived icon. Returns false when there is no icon to show it from. Callable from any thread (Windows only).
 bool showTrayBalloon(const std::string& title, const std::string& body);

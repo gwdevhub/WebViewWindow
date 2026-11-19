@@ -140,6 +140,7 @@ struct GtkApi {
     void (*g_free)(gpointer) = nullptr;
     void* (*status_icon_new_from_pixbuf)(GdkPixbuf*) = nullptr;
     void (*status_icon_set_tooltip_text)(void*, const gchar*) = nullptr;
+    void (*status_icon_set_from_pixbuf)(void*, GdkPixbuf*) = nullptr;
     void (*status_icon_set_visible)(void*, gboolean) = nullptr;
     void (*status_icon_position_menu)(GtkWidget*, gint*, gint*, gboolean*, gpointer) = nullptr;
     GtkWidget* (*menu_new)() = nullptr;
@@ -266,6 +267,7 @@ GtkApi loadApi() {
     bind(api.g_free, library, "g_free");
     bind(api.status_icon_new_from_pixbuf, library, "gtk_status_icon_new_from_pixbuf");
     bind(api.status_icon_set_tooltip_text, library, "gtk_status_icon_set_tooltip_text");
+    bind(api.status_icon_set_from_pixbuf, library, "gtk_status_icon_set_from_pixbuf");
     bind(api.status_icon_set_visible, library, "gtk_status_icon_set_visible");
     bind(api.status_icon_position_menu, library, "gtk_status_icon_position_menu");
     bind(api.menu_new, library, "gtk_menu_new");
@@ -1049,11 +1051,11 @@ void initializeWindowing() {
     ensureGtk();
 }
 
-void setApplicationIcon(const std::string& png) {
-    ensureGtk();
+// A PNG decoded into a pixbuf that the caller owns (a copy, so the loader's own picture is released). Null when it fails.
+GdkPixbuf* decodePng(const std::string& png) {
     void* library = dlopen("libgtk-3.so.0", RTLD_LAZY | RTLD_LOCAL);
     if (!library) {
-        return;
+        return nullptr;
     }
     using LoaderNew = GdkPixbufLoader* (*)();
     using LoaderWrite = gboolean (*)(GdkPixbufLoader*, const guchar*, gsize, GError**);
@@ -1071,20 +1073,33 @@ void setApplicationIcon(const std::string& png) {
     auto width = reinterpret_cast<Size>(dlsym(library, "gdk_pixbuf_get_width"));
     auto height = reinterpret_cast<Size>(dlsym(library, "gdk_pixbuf_get_height"));
     if (!loaderNew || !loaderWrite || !loaderClose || !loaderPixbuf || !scale || !unref || !width || !height) {
-        return;
+        return nullptr;
     }
     GdkPixbufLoader* loader = loaderNew();
     const bool written = loaderWrite(loader, reinterpret_cast<const guchar*>(png.data()), png.size(), nullptr) &&
                          loaderClose(loader, nullptr);
     GdkPixbuf* decoded = written ? loaderPixbuf(loader) : nullptr;
-    // The picture is kept at the size it was made, so it isn't stretched; the copy is owned here, and the loader's picture is released.
-    GdkPixbuf* scaled = decoded ? scale(decoded, width(decoded), height(decoded), GDK_INTERP_BILINEAR) : nullptr;
+    // The picture is kept at the size it was made, so it isn't stretched; the copy is owned by the caller.
+    GdkPixbuf* copy = decoded ? scale(decoded, width(decoded), height(decoded), GDK_INTERP_BILINEAR) : nullptr;
     unref(loader);
-    if (scaled) {
+    return copy;
+}
+
+void unrefPixbuf(GdkPixbuf* picture) {
+    void* library = dlopen("libgtk-3.so.0", RTLD_LAZY | RTLD_LOCAL);
+    if (library && picture) {
+        reinterpret_cast<void (*)(gpointer)>(dlsym(library, "g_object_unref"))(picture);
+    }
+}
+
+void setApplicationIcon(const std::string& png) {
+    ensureGtk();
+    GdkPixbuf* decoded = decodePng(png);
+    if (decoded) {
         if (applicationIcon) {
-            unref(applicationIcon);
+            unrefPixbuf(applicationIcon);
         }
-        applicationIcon = scaled;
+        applicationIcon = decoded;
     }
 }
 
@@ -1158,6 +1173,23 @@ void removeTrayIcon() {
         api().widget_destroy(trayState->menu);
     }
     trayState.reset();
+}
+
+bool updateTrayIcon(const std::string& png, const std::string& tooltip) {
+    if (!trayState) {
+        return false;
+    }
+    bool pictureSet = true;
+    if (!png.empty()) {
+        if (GdkPixbuf* picture = decodePng(png)) {
+            api().status_icon_set_from_pixbuf(trayState->icon, picture);
+            unrefPixbuf(picture);
+        } else {
+            pictureSet = false;   // the bytes are not a PNG this platform can read
+        }
+    }
+    api().status_icon_set_tooltip_text(trayState->icon, tooltip.c_str());
+    return pictureSet;
 }
 
 void runEventLoop() {
