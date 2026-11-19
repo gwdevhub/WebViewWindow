@@ -51,9 +51,6 @@ struct WindowOptions {
     bool confinedToWorkArea = true;
     // How long a hidden window keeps its web view before the web view is freed. A show or present before then keeps it.
     std::chrono::milliseconds cooldown = std::chrono::minutes(2);
-    // How long a page has to report ready after the window opens. When it does not, the window shows an error and closes. Zero
-    // turns the check off.
-    std::chrono::milliseconds readyTimeout = std::chrono::seconds(10);
     // Kept under other windows, so the window reads as part of the desktop.
     bool keepBelow = false;
     // Shown on every virtual desktop. Windows has none, so there it does nothing.
@@ -68,10 +65,11 @@ struct WindowOptions {
     bool clickThrough = false;
     // The page's hardware acceleration policy. Unset leaves WebKit's default in place.
     std::optional<HardwareAcceleration> hardwareAcceleration;
-    // The folder WebView2 keeps its profile and caches in. Empty means a folder beside the executable.
+    // The folder the page keeps its profile and caches in: WebView2's on Windows, WebKit's on Linux. Empty means the platform's default: a
+    // folder beside the executable on Windows, and WebKit's own folder on Linux. Not read on macOS.
     std::filesystem::path webViewDataFolder;
     // How long a page may take to report that it's ready before the window fails. Zero means no limit.
-    std::chrono::seconds startupTimeout = std::chrono::seconds(30);
+    std::chrono::seconds startupTimeout = std::chrono::seconds(10);
 };
 
 // The platform's window and web view. Each platform defines it in its own source file.
@@ -228,8 +226,6 @@ private:
     void keepOnScreen();
     // Starts the cooldown after which a hidden window frees its web view. A show or present cancels it.
     void startCooldown();
-    // Shows the error and closes the window when its page has not reported ready within readyTimeout (see WindowOptions).
-    void startReadyWatch();
     void freeWebView();
 
     WindowOptions options_;
@@ -318,8 +314,13 @@ struct TrayMenuItem {
 bool showTrayIcon(const std::string& tooltip, std::function<void()> onActivate, std::vector<TrayMenuItem> menu);
 void removeTrayIcon();
 
+// Changes the tray icon's picture and tooltip while the tray icon is shown. The picture is PNG bytes; empty keeps the picture. Returns
+// false when no tray icon is shown, or the platform cannot change it yet.
+bool updateTrayIcon(const std::string& png, const std::string& tooltip);
+
 // Shows a balloon notification from the application's icon in the notification area. It uses the tray icon when one is shown,
-// and otherwise a short-lived icon. Returns false when there is no icon to show it from. Callable from any thread (Windows only).
+// and otherwise a short-lived icon. Returns false when there is no icon to show it from. Callable from any thread. On Linux it is a
+// desktop notification through libnotify, which returns false when libnotify isn't installed.
 bool showTrayBalloon(const std::string& title, const std::string& body);
 
 // The desktop's side of the library. The host application defines these for each platform it runs on: the library uses them, but

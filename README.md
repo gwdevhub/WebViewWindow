@@ -17,9 +17,9 @@ The library is meant to be used as a submodule. The host application:
   comes before then takes effect once the page is ready. The page reports it by posting `{id, method: 'ready', args: []}` to the
   host, once it has subscribed to the events it needs. Until then, host events wait for it.
 - Events queue until the page is ready, and replies from a page that has since been reloaded are dropped.
-- On Windows, if the page doesn't report ready within `WindowOptions::startupTimeout` (30 seconds by default), or the web view
-  fails, the window calls `onWebViewFailure`. Linux has no startup timeout yet. The default shows the error and closes the window. A page can report its own failure by
-  posting `{id, method: 'frontendError', args: [message]}`. `reload()` recreates the web view and loads the page again.
+- If the page doesn't report ready within `WindowOptions::startupTimeout` (10 seconds by default) on Windows, macOS or Linux, or the
+  web view fails, the window calls `onWebViewFailure`. The default shows the error and closes the window. A page can report its own
+  failure by posting `{id, method: 'frontendError', args: [message]}`. `reload()` recreates the web view and loads the page again.
 - `WindowOptions::webViewDataFolder` sets where WebView2 keeps its profile. Empty means a folder beside the executable.
 - `hide` frees the window's web view after two minutes, unless the window is shown again first. The next `show` or `present`
   opens the window again.
@@ -59,6 +59,16 @@ The library is meant to be used as a submodule. The host application:
 
 The Windows build uses MinGW-w64. The example is built with `WEBVIEW_WINDOW_BUILD_EXAMPLE` (on by default). Set it to OFF
 when the library is used as a submodule. The WebView2 runtime must be installed on the machine that runs the program.
+
+## Testing rule
+
+Every feature needs at least one test that runs on each platform: Windows, Linux and macOS. A test that doesn't depend on the platform
+counts for all three, so one such test is enough. A feature with no passing test on a platform is not finished there.
+
+- A stub counts as a feature. It needs either a real implementation, or a test that checks the result the header documents (for example,
+  that `updateTrayIcon` returns `false` where it isn't implemented).
+- A test counts only when a script in `tests/` or a CI job runs it on that platform. A test that is written but never run doesn't count.
+- `TODO.md` lists the features that have no test on each platform.
 
 ## Status
 
