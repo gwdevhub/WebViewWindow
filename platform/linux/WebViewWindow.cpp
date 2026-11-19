@@ -45,6 +45,10 @@ struct NativeWindow {
     bool confined = true;
     // The window this belongs to, which the load events report to.
     WebViewWindow* owner = nullptr;
+    // A size that resize asked for, until the window manager applies it, and a move that waits for it. The window manager places
+    // a window against the size it holds, so a move sent before the size lands against the old one.
+    std::optional<std::pair<int, int>> pendingSize;
+    std::optional<std::pair<int, int>> pendingMove;
 };
 
 namespace {
@@ -488,7 +492,19 @@ gboolean onPermissionRequested(WebKitWebView* view, WebKitPermissionRequest* req
 
 // Fires on every move and resize. FALSE lets GTK apply the change as usual.
 gboolean onConfigure(GtkWidget*, GdkEvent*, gpointer data) {
-    static_cast<WebViewWindow*>(data)->notifyFrameChanged();
+    auto* native = static_cast<NativeWindow*>(data);
+    gint width = 0;
+    gint height = 0;
+    api().window_get_size(reinterpret_cast<GtkWindow*>(native->window), &width, &height);
+    if (native->pendingSize && native->pendingSize->first == width && native->pendingSize->second == height) {
+        native->pendingSize.reset();
+        if (native->pendingMove) {
+            const auto [x, y] = *native->pendingMove;
+            native->pendingMove.reset();
+            api().window_move(reinterpret_cast<GtkWindow*>(native->window), x, y);
+        }
+    }
+    native->owner->notifyFrameChanged();
     return FALSE;
 }
 
@@ -600,7 +616,7 @@ void WebViewWindow::platformOpen() {
 
     gtk.g_signal_connect_data(native.window, "delete-event", reinterpret_cast<GCallback>(onDeleteEvent), this, nullptr,
                               static_cast<GConnectFlags>(0));
-    gtk.g_signal_connect_data(native.window, "configure-event", reinterpret_cast<GCallback>(onConfigure), this, nullptr,
+    gtk.g_signal_connect_data(native.window, "configure-event", reinterpret_cast<GCallback>(onConfigure), &native, nullptr,
                               static_cast<GConnectFlags>(0));
     // The window is closing: GTK destroys it after this, so the NativeWindow must stop pointing at it.
     gtk.g_signal_connect_data(native.window, "destroy", reinterpret_cast<GCallback>(+[](GtkWidget*, gpointer data) {
@@ -929,15 +945,29 @@ void WebViewWindow::platformShow(bool visible) {
 }
 
 void WebViewWindow::platformResize(int width, int height) {
-    if (native_ && native_->window) {
-        api().window_resize(reinterpret_cast<GtkWindow*>(native_->window), width, height);
+    if (!native_ || !native_->window) {
+        return;
+    }
+    auto* window = reinterpret_cast<GtkWindow*>(native_->window);
+    gint currentWidth = 0;
+    gint currentHeight = 0;
+    api().window_get_size(window, &currentWidth, &currentHeight);
+    api().window_resize(window, width, height);
+    // Only a shown window gets the configure that confirms the size, so a hidden one doesn't wait for it.
+    if (native_->shownOnce && (currentWidth != width || currentHeight != height)) {
+        native_->pendingSize = std::make_pair(width, height);
     }
 }
 
 void WebViewWindow::platformMove(int x, int y) {
-    if (native_ && native_->window) {
-        api().window_move(reinterpret_cast<GtkWindow*>(native_->window), x, y);
+    if (!native_ || !native_->window) {
+        return;
     }
+    if (native_->pendingSize) {
+        native_->pendingMove = std::make_pair(x, y);
+        return;
+    }
+    api().window_move(reinterpret_cast<GtkWindow*>(native_->window), x, y);
 }
 
 // GTK sizes are already in the units resize takes: the display's scale is GTK's own.

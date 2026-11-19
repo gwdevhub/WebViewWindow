@@ -236,6 +236,7 @@ void WebViewWindow::keepWebView() {
 void WebViewWindow::resize(int width, int height) {
     baseWidth_ = width;
     baseHeight_ = height;
+    requestedSize_ = std::make_pair(scaledSize(width), scaledSize(height));
     platformResize(scaledSize(width), scaledSize(height));
     keepOnScreen();
 }
@@ -249,6 +250,7 @@ std::optional<std::pair<int, int>> WebViewWindow::frameUnscaled() const {
 }
 
 void WebViewWindow::rememberSize() {
+    requestedSize_.reset();
     if (!opened_ || options_.autosize) {
         return;
     }
@@ -277,8 +279,23 @@ std::optional<ScreenRect> WebViewWindow::frame() const {
     return platformFrame();
 }
 
+std::optional<ScreenRect> WebViewWindow::frameForPlacement() {
+    auto current = platformFrame();
+    if (!current || !requestedSize_) {
+        return current;
+    }
+    if (current->width == requestedSize_->first && current->height == requestedSize_->second) {
+        requestedSize_.reset();
+    } else {
+        current->width = requestedSize_->first;
+        current->height = requestedSize_->second;
+    }
+    return current;
+}
+
 void WebViewWindow::move(int x, int y) {
-    const auto current = platformFrame();
+    // Unconfined, the window goes where it's put, even past the edges of its work area.
+    const auto current = options_.confinedToWorkArea ? frameForPlacement() : std::nullopt;
     if (!current) {
         platformMove(x, y);
         return;
@@ -299,7 +316,7 @@ void WebViewWindow::keepOnScreen() {
     if (!options_.confinedToWorkArea) {
         return;
     }
-    const auto current = platformFrame();
+    const auto current = frameForPlacement();
     if (!current) {
         return;
     }

@@ -236,6 +236,11 @@ private:
     // The window's size without the UI scale, which is what the page and the settings work in.
     int baseWidth_ = 0;
     int baseHeight_ = 0;
+    // The platform size that resize last asked for, until the platform reports it. A move or a keep-on-screen check that
+    // reads the frame before then would size the window from its old size.
+    std::optional<std::pair<int, int>> requestedSize_;
+    // The window's frame for placing it, with the size resize asked for while the platform hasn't reported it yet.
+    std::optional<ScreenRect> frameForPlacement();
     bool visible_ = false;
     bool opened_ = false;
     // Counts the page loads, so a reply from an earlier page is dropped once the window has loaded another.
