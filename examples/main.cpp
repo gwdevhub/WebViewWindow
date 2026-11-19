@@ -1,6 +1,8 @@
 // A window that the tests drive. The page reports "loaded" once it has loaded. Each line on stdin is a command:
 //   hide, show, present: the window call of the same name, then the state is reported
 //   report: the state is reported
+//   size <width> <height>: the window is resized, and the state is reported on the next report
+//   place <x> <y>: the window is moved to that screen position, and the state is reported on the next report
 //   confine <on|off>: the window is confined to its work area, or may go past its edges
 //   move: a move starts, and follows the pointer until the button is released
 //   region [x y width height]...: the window takes the pointer only over those rectangles, in its units; with none, the pointer
@@ -32,6 +34,7 @@
 //   --icon <png file>         the application icon, which the tray icon needs
 //   --always-on-top, --keep-below, --sticky, --skip-taskbar, --utility: the window options of the same names
 //   --opaque                  the window isn't see-through
+//   --unconfined              the window isn't confined to its work area, so it can go past its edges
 //   --clear-page              the built-in page's background is see-through, so the desktop shows through a transparent window
 //   --no-titlebar             the page starts without its title bar; --not-resizable: the page's edges don't resize the window
 //   --resize-edges            the library draws resize strips along the window's edges
@@ -86,6 +89,7 @@ struct Settings {
     bool invisible = false;
     bool noReady = false;
     bool clickThrough = false;
+    bool unconfined = false;
     int minWidth = 0;
     int minHeight = 0;
     std::chrono::seconds startupTimeout = std::chrono::seconds(30);
@@ -183,6 +187,7 @@ private:
         options.utility = settings.utility;
         options.transparent = !settings.opaque;
         options.clickThrough = settings.clickThrough;
+        options.confinedToWorkArea = !settings.unconfined;
         options.titleBar = !settings.noTitleBar;
         options.resizable = !settings.notResizable;
         options.resizeEdges = settings.resizeEdges;
@@ -287,6 +292,8 @@ bool parseSettings(int argc, char** argv, Settings& settings) {
             settings.opaque = true;
         } else if (arg == "--click-through") {
             settings.clickThrough = true;
+        } else if (arg == "--unconfined") {
+            settings.unconfined = true;
         } else if (arg == "--clear-page") {
             settings.clearPage = true;
         } else if (arg == "--no-titlebar") {
@@ -327,6 +334,18 @@ bool runCommand(ExampleWindow& window, const std::string& line) {
         runOnUiThread([&window] { window.present(); window.report(); });
     } else if (command == "report") {
         runOnUiThread([&window] { window.report(); });
+    } else if (command == "size") {
+        std::istringstream sizes(line.substr(command.size()));
+        int width = 0;
+        int height = 0;
+        sizes >> width >> height;
+        runOnUiThread([&window, width, height] { window.resize(width, height); });
+    } else if (command == "place") {
+        std::istringstream spot(line.substr(command.size()));
+        int x = 0;
+        int y = 0;
+        spot >> x >> y;
+        runOnUiThread([&window, x, y] { window.move(x, y); });
     } else if (command == "confine") {
         const bool confined = argument == "on";
         runOnUiThread([&window, confined] { window.setConfinedToWorkArea(confined); window.report(); });
