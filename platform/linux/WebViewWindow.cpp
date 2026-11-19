@@ -17,6 +17,8 @@
 
 struct NativeWindow {
     GtkWidget* window = nullptr;
+    // Which open this is, so a startup timeout set for an earlier open does nothing to a later one (see platformOpen).
+    std::uint64_t id = 0;
     WebKitWebView* view = nullptr;
     WebKitUserContentManager* manager = nullptr;
     // Set while the user drags or resizes the window: the window follows the pointer, and the frame it began with is kept here.
@@ -518,6 +520,28 @@ void WebViewWindow::platformOpen() {
     native_.reset(new NativeWindow);
     NativeWindow& native = *native_;
     native.owner = this;
+    // The startup timeout: the window fails if this page is still not ready when it runs out. The check is for this open only, so a
+    // timer left over from an earlier open, or from a window that has since been closed, does nothing.
+    static std::uint64_t opens = 0;
+    native.id = ++opens;
+    if (options_.startupTimeout > std::chrono::seconds::zero()) {
+        struct StartupWatch {
+            std::function<void()> fire;
+        };
+        auto* watch = new StartupWatch{[this, alive = std::weak_ptr<bool>(alive_), id = native.id] {
+            if (alive.expired() || !native_ || native_->id != id || native_->pageReady) {
+                return;
+            }
+            notifyWebViewFailed("The window did not finish loading within " + std::to_string(options_.startupTimeout.count()) +
+                                " seconds, so it has been closed.");
+        }};
+        gtk.timeout_add(static_cast<guint>(options_.startupTimeout.count() * 1000), [](gpointer data) -> gboolean {
+            auto* pending = static_cast<StartupWatch*>(data);
+            pending->fire();
+            delete pending;
+            return FALSE;
+        }, watch);
+    }
 
     native.window = gtk.window_new(GTK_WINDOW_TOPLEVEL);
     auto* window = reinterpret_cast<GtkWindow*>(native.window);
