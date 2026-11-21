@@ -336,9 +336,16 @@ void preferXWayland() {
     }
 }
 
+// WebKitGTK's DMABUF renderer renders through GBM, whose allocation fails on NVIDIA and other XWayland setups, so the page
+// paints only its damaged regions and looks blank or half-drawn. Shared-memory buffers render the same without GBM.
+void useSharedMemoryBuffers() {
+    setenv("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1", 0);
+}
+
 void ensureGtk() {
     static const bool initialized = [] {
         preferXWayland();
+        useSharedMemoryBuffers();
         if (!api().init_check(nullptr, nullptr)) {
             throw std::runtime_error("GTK couldn't open a display.");
         }
@@ -1148,6 +1155,7 @@ std::optional<RuntimeProblem> missingWindowingRuntime() {
     }
     try {
         preferXWayland();
+        useSharedMemoryBuffers();
         if (!api().init_check(nullptr, nullptr)) {
             return RuntimeProblem{"GTK couldn't open a display. Start the application from a desktop session.", ""};
         }
