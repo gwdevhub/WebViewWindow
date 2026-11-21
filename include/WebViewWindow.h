@@ -49,6 +49,9 @@ struct WindowOptions {
     // opens, is resized, or is dropped after a move or resize, so it never goes past the monitor's edges. When it isn't confined,
     // the window may go past them, and part of it can be off the screen.
     bool confinedToWorkArea = true;
+    // Whether the window opens in the middle of its work area. When it doesn't, Windows chooses where it opens, as it does for any new
+    // window. Only Windows honours this; Linux always centres the window.
+    bool centered = true;
     // How long a hidden window keeps its web view before the web view is freed. A show or present before then keeps it.
     std::chrono::milliseconds cooldown = std::chrono::minutes(2);
     // Kept under other windows, so the window reads as part of the desktop.

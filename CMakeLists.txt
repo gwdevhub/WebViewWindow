@@ -24,7 +24,12 @@ if(WIN32)
 
     # WebView2Loader.dll is written beside the executable at start, from resource 2 of the program. A program calls this with its
     # target to embed the loader there, so its release can be the executable alone.
-    set(WEBVIEW_WINDOW_LOADER_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/bin/x64/WebView2Loader.dll" CACHE INTERNAL "")
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        set(WEBVIEW_WINDOW_LOADER_ARCH x86)
+    else()
+        set(WEBVIEW_WINDOW_LOADER_ARCH x64)
+    endif()
+    set(WEBVIEW_WINDOW_LOADER_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/bin/${WEBVIEW_WINDOW_LOADER_ARCH}/WebView2Loader.dll" CACHE INTERNAL "" FORCE)
     function(webview_window_embed_loader target)
         enable_language(RC)
         set(rc "${CMAKE_CURRENT_BINARY_DIR}/${target}_webview2_loader.rc")

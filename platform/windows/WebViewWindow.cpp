@@ -893,7 +893,7 @@ void WebViewWindow::platformOpen() {
     NativeWindow* native = native_.get();
     native->owner = this;
     std::wstring windowTitle = toWide(title());
-    // Opened in the middle of the work area. A caller that places the window moves it after it's opened.
+    // Opened in the middle of the work area unless the options leave the placement to Windows. A caller that places the window moves it after it's opened.
     const auto area = workArea();
     // Sizes are in device-independent pixels, so they grow with the display's DPI.
     const UINT dpi = GetDpiForSystem();
@@ -902,13 +902,21 @@ void WebViewWindow::platformOpen() {
     native->minHeight = MulDiv(scaledSize(options.minHeight), dpi, 96);
     const int width = std::max(MulDiv(scaledSize(options.width), dpi, 96), native->minWidth);
     const int height = std::max(MulDiv(scaledSize(options.height), dpi, 96), native->minHeight);
-    const int x = area ? area->x + (area->width - width) / 2 : CW_USEDEFAULT;
-    const int y = area ? area->y + (area->height - height) / 2 : CW_USEDEFAULT;
-    // The window has no frame that takes room, so its size is the page's size.
-    native->hwnd = CreateWindowExW(exStyle, kWindowClass, windowTitle.c_str(), style, x, y, width, height,
+    const bool centre = area && options.centered;
+    const bool systemPlaced = !centre;
+    const int x = centre ? area->x + (area->width - width) / 2 : CW_USEDEFAULT;
+    const int y = centre ? area->y + (area->height - height) / 2 : CW_USEDEFAULT;
+    // Windows places only overlapped windows by default, so a system-placed window is created overlapped and made frameless before it shows.
+    native->hwnd = CreateWindowExW(exStyle, kWindowClass, windowTitle.c_str(), systemPlaced ? WS_OVERLAPPEDWINDOW : style, x, y, width, height,
                                    options.skipTaskbar ? taskbarOwner() : nullptr, nullptr, GetModuleHandleW(nullptr), native);
     if (!native->hwnd) {
         throw std::runtime_error("The window couldn't be created.");
+    }
+    if (systemPlaced) {
+        RECT placed{};
+        GetWindowRect(native->hwnd, &placed);
+        SetWindowLongPtrW(native->hwnd, GWL_STYLE, style);
+        SetWindowPos(native->hwnd, nullptr, placed.left, placed.top, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
     if (options.transparent) {
         native->transparent = true;
@@ -1361,6 +1369,9 @@ void WebViewWindow::platformRunScript(const std::string& script) {
 void WebViewWindow::platformPageReady() {
     if (native_ && native_->hwnd) {
         KillTimer(native_->hwnd, 1);
+        if (!native_->pageLoaded && native_->wantsVisible) {
+            onBeforeFirstShow();
+        }
         showLoadedPage(native_.get());
     }
 }
