@@ -339,6 +339,9 @@ void preferXWayland() {
 // WebKitGTK's DMABUF renderer renders through GBM, whose allocation fails on NVIDIA and other XWayland setups, so the page
 // paints only its damaged regions and looks blank or half-drawn. Shared-memory buffers render the same without GBM.
 void useSharedMemoryBuffers() {
+    // Pre-2.46 opt-out still carried in wrappers and login environments keeps the legacy render path whose GBM
+    // allocation failure is exactly what the forced shared-memory mode exists to route around.
+    unsetenv("WEBKIT_DISABLE_DMABUF_RENDERER");
     setenv("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1", 0);
 }
 
