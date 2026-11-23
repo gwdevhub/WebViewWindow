@@ -3,6 +3,7 @@
 #include <ole2.h>
 
 #include <stdexcept>
+#include <string>
 
 namespace composition {
 
@@ -14,6 +15,21 @@ void release(T*& object) {
         object->Release();
         object = nullptr;
     }
+}
+
+using D3D11CreateDeviceFn = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT, const D3D_FEATURE_LEVEL*, UINT, UINT, ID3D11Device**,
+                                             D3D_FEATURE_LEVEL*, ID3D11DeviceContext**);
+using DCompositionCreateDeviceFn = HRESULT(WINAPI*)(IDXGIDevice*, REFIID, void**);
+
+// Loaded at run time, so a program that never makes a see-through window doesn't need these DLLs to start.
+template <typename F>
+F directFunction(const wchar_t* library_name, const char* name) {
+    const HMODULE library = LoadLibraryW(library_name);
+    const FARPROC address = library ? GetProcAddress(library, name) : nullptr;
+    if (!address) {
+        throw std::runtime_error(std::string(name) + " isn't available, so the see-through page can't be drawn.");
+    }
+    return reinterpret_cast<F>(address);
 }
 
 // Converts a drag's screen point to the window's client area, where the web view takes it.
@@ -76,13 +92,15 @@ Surface::~Surface() {
 }
 
 void Surface::create(HWND hwnd) {
-    HRESULT result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
-                                       D3D11_SDK_VERSION, &direct3d_, nullptr, nullptr);
+    const auto createDirect3D = directFunction<D3D11CreateDeviceFn>(L"d3d11.dll", "D3D11CreateDevice");
+    const auto createComposition = directFunction<DCompositionCreateDeviceFn>(L"dcomp.dll", "DCompositionCreateDevice");
+    HRESULT result = createDirect3D(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
+                                    D3D11_SDK_VERSION, &direct3d_, nullptr, nullptr);
     if (SUCCEEDED(result)) {
         IDXGIDevice* dxgi = nullptr;
         result = direct3d_->QueryInterface(IID_PPV_ARGS(&dxgi));
         if (SUCCEEDED(result)) {
-            result = DCompositionCreateDevice(dxgi, IID_PPV_ARGS(&device_));
+            result = createComposition(dxgi, IID_PPV_ARGS(&device_));
             dxgi->Release();
         }
     }
