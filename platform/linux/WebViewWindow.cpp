@@ -136,6 +136,7 @@ struct GtkApi {
     void (*monitor_get_workarea)(GdkMonitor*, GdkRectangle*) = nullptr;
     gint (*widget_get_scale_factor)(GtkWidget*) = nullptr;
     void (*window_set_icon)(GtkWindow*, GdkPixbuf*) = nullptr;
+    void (*window_set_default_icon)(GdkPixbuf*) = nullptr;
     GdkDisplay* (*widget_get_display)(GtkWidget*) = nullptr;
     GdkSeat* (*display_get_default_seat)(GdkDisplay*) = nullptr;
     GdkDevice* (*seat_get_pointer)(GdkSeat*) = nullptr;
@@ -233,6 +234,7 @@ GtkApi loadApi() {
     bind(api.monitor_get_workarea, library, "gdk_monitor_get_workarea");
     bind(api.widget_get_scale_factor, library, "gtk_widget_get_scale_factor");
     bind(api.window_set_icon, library, "gtk_window_set_icon");
+    bind(api.window_set_default_icon, library, "gtk_window_set_default_icon");
     bind(api.widget_get_display, library, "gtk_widget_get_display");
     bind(api.display_get_default_seat, library, "gdk_display_get_default_seat");
     bind(api.seat_get_pointer, library, "gdk_seat_get_pointer");
@@ -1231,6 +1233,7 @@ void setApplicationIcon(const std::string& png) {
             unrefPixbuf(applicationIcon);
         }
         applicationIcon = decoded;
+        api().window_set_default_icon(decoded);
     }
 }
 
